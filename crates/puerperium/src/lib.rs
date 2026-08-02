@@ -44,6 +44,7 @@
 //! );
 //! ```
 
+pub mod apprentice;
 pub mod convert;
 pub mod dataset;
 pub mod engine;
@@ -58,6 +59,7 @@ pub mod provenance;
 pub mod provider;
 pub mod registry;
 pub mod secrets;
+pub mod source;
 pub mod store;
 
 pub use error::{Error, Result};

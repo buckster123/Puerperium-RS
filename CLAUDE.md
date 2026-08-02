@@ -152,6 +152,10 @@ cargo build --release --workspace
 ./target/release/puerperium model add --name worker-v2 --base-model Qwen/Qwen3.6-27B \
     --parent worker-v1 --dataset my-set --trainer-agent FORGE
 ./target/release/puerperium model list
+./target/release/puerperium apprentice agents /path/to/cerebro-snapshot.db
+./target/release/puerperium apprentice create --id ap1 --db /path/to/snapshot.db \
+    --master-agent CLAUDE --specialization "ApexOS ops" --name deploy_hand \
+    --dataset-name ap1-data --include-types procedural --domain ApexOS --dry-run
 ./target/release/puerperium apprentice list
 ./target/release/puerperium lineage worker-v2          # --json for the full structure
 
@@ -175,7 +179,12 @@ value**. On this box the key already comes from `~/.bashrc`, so no file is neede
 types and the parsers are tested against those shapes, but no request has been sent — it is
 INSTALLED, not ACTIVE. First live use needs a key and is André's explicit call (D4/D8).
 
-**Mining the live store for a real run:** copy the DB first, never query it in place —
+**Mining a Cerebro store:** `apprentice create --db` opens the file **read-only** and never
+writes. Point it at a `.backup` snapshot, not a live database:
+`sqlite3 /var/lib/cerebro/cerebro.db ".backup /tmp/snap.db"` — `.backup` is safe against
+concurrent writes, copying the file is not.
+
+**For a raw export instead:** copy the DB first, never query it in place —
 `cp ~/.cerebro-cortex/cerebro.db /tmp/copy.db`, then dump with
 `sqlite3 copy.db "SELECT json_group_array(json_object('id',id,'content',content,'memory_type',memory_type,'tags',json(COALESCE(tags,'[]')),'agent_id',agent_id,'salience',salience)) FROM memories WHERE deleted_at IS NULL;"`.
 It is another tool's state directory: read it, never write it.

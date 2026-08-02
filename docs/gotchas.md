@@ -12,6 +12,21 @@
 > explicit don't. Cross-project version drift lives in
 > `~/Projects/Launchpad-RS/docs/sharp-edges.md` instead.
 
+- **A Cerebro database is opened `SQLITE_OPEN_READ_ONLY`, always.** It is another tool's state
+  directory and usually a live daily driver — the same posture ApexRouter takes toward
+  `~/.vastai-gguf/`: read it, never write it. Read-only open also means a typo'd path *fails*
+  instead of creating an empty database that then reads as "no memories". A test asserts the
+  file is not created. **Point this at a `.backup` snapshot, not a live file — copying a
+  database being written is not safe, `.backup` is. Don't add a write path, a migration, or a
+  `create_if_missing`.**
+
+- **Mine procedural memories when quality matters.** On the real store, restricting to
+  procedural gave **84% heading-framed** examples (96/18) against 62% (112/70) with semantic
+  included — because the structured memories *are* the procedural ones (22 of 59 carry `##`
+  sections, versus 3 of 78 semantic). Semantic widens coverage and dilutes framing. **Don't
+  read a small example count as a bad run — check the framing split before widening the type
+  filter.**
+
 - **The stored dataset and the uploaded file are different artifacts.** Together's validator
   rejects unknown columns outright (`InvalidFileFormatError: Found extra column`), and our
   JSONL carries `provenance` and `instruction_kind` beside `messages` because lineage is the
