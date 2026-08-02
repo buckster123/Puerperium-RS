@@ -10,7 +10,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::Write;
+
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
@@ -19,6 +19,7 @@ use sha2::{Digest, Sha256};
 
 use crate::convert::Converted;
 use crate::error::{Error, Result};
+use crate::store;
 
 /// A handle to a written dataset. Carried by job and model records.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,20 +76,6 @@ impl DatasetMeta {
     }
 }
 
-/// Reject names that would escape the datasets directory or collide with the sidecar.
-fn validate_name(name: &str) -> Result<()> {
-    let bad = name.is_empty()
-        || name.contains('/')
-        || name.contains('\\')
-        || name.contains("..")
-        || name.starts_with('.')
-        || name.chars().any(|c| c.is_control());
-    if bad {
-        return Err(Error::InvalidDatasetName(name.to_string()));
-    }
-    Ok(())
-}
-
 pub fn jsonl_path(dir: &Path, name: &str) -> PathBuf {
     dir.join(format!("{name}.jsonl"))
 }
@@ -108,7 +95,7 @@ pub fn write(
     converted: &Converted,
     source: SourceSpec,
 ) -> Result<DatasetMeta> {
-    validate_name(name)?;
+    store::validate_name(name)?;
 
     if converted.examples.is_empty() {
         return Err(Error::NoExamples {
@@ -131,7 +118,7 @@ pub fn write(
     }
 
     let sha256 = hex(Sha256::digest(body.as_bytes()).as_slice());
-    write_atomic(&data_path, body.as_bytes())?;
+    store::write_atomic(&data_path, body.as_bytes())?;
 
     let meta = DatasetMeta {
         name: name.to_string(),
@@ -156,39 +143,35 @@ pub fn write(
     };
 
     let meta_json = serde_json::to_vec_pretty(&meta)?;
-    write_atomic(&meta_path(dir, name), &meta_json)?;
+    store::write_atomic(&meta_path(dir, name), &meta_json)?;
 
     Ok(meta)
 }
 
 /// Load a sidecar.
+///
+/// A missing sidecar is [`Error::RecordNotFound`], not a raw io error — the same shape
+/// `store::load` gives, so "there is no dataset called that" reads the same everywhere
+/// instead of leaking an ENOENT chain at the caller.
 pub fn read_meta(dir: &Path, name: &str) -> Result<DatasetMeta> {
     let p = meta_path(dir, name);
-    let bytes = fs::read(&p).map_err(|e| Error::io(&p, e))?;
+    let bytes = match fs::read(&p) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(Error::RecordNotFound {
+                dir: dir.to_path_buf(),
+                name: name.to_string(),
+            })
+        }
+        Err(e) => return Err(Error::io(&p, e)),
+    };
     Ok(serde_json::from_slice(&bytes)?)
 }
 
 /// Every dataset in `dir`, by sidecar, newest first. A missing directory is an empty list,
 /// not an error — a fresh node has simply not made one yet.
 pub fn list(dir: &Path) -> Result<Vec<DatasetMeta>> {
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(Error::io(dir, e)),
-    };
-
-    let mut out = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(|e| Error::io(dir, e))?;
-        let path = entry.path();
-        let Some(fname) = path.file_name().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        let Some(name) = fname.strip_suffix(".meta.json") else {
-            continue;
-        };
-        out.push(read_meta(dir, name)?);
-    }
+    let mut out: Vec<DatasetMeta> = store::list_with_suffix(dir, ".meta.json")?;
     out.sort_by_key(|m| std::cmp::Reverse(m.created_at));
     Ok(out)
 }
@@ -199,16 +182,6 @@ pub fn verify(dir: &Path, name: &str) -> Result<bool> {
     let p = jsonl_path(dir, name);
     let bytes = fs::read(&p).map_err(|e| Error::io(&p, e))?;
     Ok(hex(Sha256::digest(&bytes).as_slice()) == meta.sha256)
-}
-
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    let tmp = path.with_extension("tmp");
-    {
-        let mut f = fs::File::create(&tmp).map_err(|e| Error::io(&tmp, e))?;
-        f.write_all(bytes).map_err(|e| Error::io(&tmp, e))?;
-        f.sync_all().map_err(|e| Error::io(&tmp, e))?;
-    }
-    fs::rename(&tmp, path).map_err(|e| Error::io(path, e))
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -303,10 +276,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         for bad in ["", "../evil", "a/b", ".hidden", "a\\b"] {
             let err = write(dir.path(), bad, &sample(), source()).expect_err("must reject");
-            assert!(
-                matches!(err, Error::InvalidDatasetName(_)),
-                "{bad:?} gave {err:?}"
-            );
+            assert!(matches!(err, Error::InvalidName(_)), "{bad:?} gave {err:?}");
         }
     }
 
@@ -334,6 +304,16 @@ mod tests {
         assert_eq!(meta.example_count, 3);
         assert!(meta.framing.is_empty());
         assert_eq!(list(dir.path()).expect("list").len(), 1);
+    }
+
+    /// "There is no dataset called that" must read the same as it does for any other record,
+    /// rather than leaking an ENOENT chain at whoever referenced it.
+    #[test]
+    fn missing_sidecar_is_record_not_found_not_a_raw_io_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let err = read_meta(dir.path(), "ghost").expect_err("must fail");
+        assert!(matches!(err, Error::RecordNotFound { .. }), "got {err:?}");
+        assert!(err.to_string().contains("ghost"));
     }
 
     #[test]

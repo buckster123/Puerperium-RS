@@ -147,6 +147,13 @@ cargo build --release --workspace
 ./target/release/puerperium data list
 ./target/release/puerperium data inspect my-set --head 5
 ./target/release/puerperium data verify my-set
+
+# Registry (S2). Records hold facts only — never liveness (that is Router's truth).
+./target/release/puerperium model add --name worker-v2 --base-model Qwen/Qwen3.6-27B \
+    --parent worker-v1 --dataset my-set --trainer-agent FORGE
+./target/release/puerperium model list
+./target/release/puerperium apprentice list
+./target/release/puerperium lineage worker-v2          # --json for the full structure
 ```
 
 **Mining the live store for a real run:** copy the DB first, never query it in place —

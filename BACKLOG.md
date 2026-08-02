@@ -16,8 +16,14 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
       headings producing broken instructions. Each has a named regression test.
       *Not yet done here:* LLM-assisted framing (deferred, D4) and synthetic tool-schema
       templates — see parking below.
-- [ ] **S2 — registry**: datasets · models · apprentices · lineage. Facts only, phase computed
-      on read (D3). CRUD round-trips under `tempfile`.
+- [x] **S2 — registry**: models · apprentices · lineage, facts only (D3). 63 tests.
+      `puerperium model add|list|show`, `apprentice list|show`, `lineage <model>`.
+      Sharpened D3 for models: a `ModelRecord` stores **no liveness** — whether an alias
+      answers is Router's truth, so the record holds `alias_requested` (what we did) and
+      nothing about what is live. `ApprenticeRecord` has no `trained` flag; it is derived.
+      Lineage degrades honestly — missing dataset, hash mismatch, missing parent and
+      hand-edited parent cycles are each reported, never fatal, never silently skipped.
+      Shared `store.rs`/`paths.rs` extracted; `dataset.rs` refactored onto them.
 - [ ] **S3 — job lifecycle**: submit → poll → artifact. **Together path first** — an API call
       with no provisioning exercises the whole lifecycle for the least risk. Fixture-driven,
       hermetic (D5). Poll timeout leaves the job recoverable by provider id, never orphaned.
