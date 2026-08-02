@@ -12,6 +12,17 @@
 > explicit don't. Cross-project version drift lives in
 > `~/Projects/Launchpad-RS/docs/sharp-edges.md` instead.
 
+- **Dream-consolidated memories are the wrong training material, and there will be a lot of
+  them.** Cerebro's consolidation phases mint memories tagged `dream_extracted` /
+  `dream_distilled`. On a real node **1579 of 1629** procedural/schematic memories were
+  dream-derived, averaging 227 characters against **4193** for the 50 lived ones — every
+  specific abstracted away into *"establish a unified documentation hub as your investigation
+  backbone"*. That is the model's own generic output; training on it reinforces the abstraction
+  rather than the knowledge underneath. Excluded by default, `--include-dream` to opt in.
+  **The dream engine and a training corpus want opposite things — one generalises, the other
+  needs specifics. Don't read a big memory count as a big dataset: the node with 6x more
+  memories yielded a third as much trainable material.**
+
 - **Together's API applies NO defaults — the SDK does, client-side.** Omitting a field is not
   "use the default", it is sending zero. An absent `batch_size` is refused with *"batch size is
   zero"*, an absent `n_checkpoints` with *"number of checkpoints is less than one"*. The body
