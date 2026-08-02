@@ -140,9 +140,19 @@ Cerebro is product input and gets provenance-stamped (D12), never confused with 
 cargo test --workspace
 cargo fmt --all && cargo clippy --workspace -- -D warnings   # clippy-zero policy
 cargo build --release --workspace
-cargo run -p puerperium-cli -- status
-echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | cargo run -p puerperium-mcp
+
+# Dataset garden (S1). Input is a JSON array of MemoryRecord — a Cerebro export.
+./target/release/puerperium data generate --from memories.json --name my-set --domain ApexOS
+./target/release/puerperium data generate --from memories.json --name x --dry-run  # no write
+./target/release/puerperium data list
+./target/release/puerperium data inspect my-set --head 5
+./target/release/puerperium data verify my-set
 ```
+
+**Mining the live store for a real run:** copy the DB first, never query it in place —
+`cp ~/.cerebro-cortex/cerebro.db /tmp/copy.db`, then dump with
+`sqlite3 copy.db "SELECT json_group_array(json_object('id',id,'content',content,'memory_type',memory_type,'tags',json(COALESCE(tags,'[]')),'agent_id',agent_id,'salience',salience)) FROM memories WHERE deleted_at IS NULL;"`.
+It is another tool's state directory: read it, never write it.
 
 State dir: `~/.local/share/puerperium/` (`PUERPERIUM_STATE_DIR` overrides). **Nothing is ever
 written into the repo directory.**
