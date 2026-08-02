@@ -159,6 +159,11 @@ cargo build --release --workspace
 ./target/release/puerperium apprentice list
 ./target/release/puerperium lineage worker-v2          # --json for the full structure
 
+# Deploy (S5). Read-only discovery; deploy needs a running ApexRouter on :2739.
+./target/release/puerperium compute                    # backends + LoRA-capable bases
+./target/release/puerperium deploy --model worker-v2 --alias apexos-worker \
+    --served-model acct/worker-v2 --dry-run
+
 # Jobs (S3). Together is a hosted API — no compute to provision.
 ./target/release/puerperium estimate --dataset my-set --params-b 27 --epochs 3
 ./target/release/puerperium job submit --id j1 --dataset my-set --output-name worker-v2 \

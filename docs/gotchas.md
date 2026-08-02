@@ -12,6 +12,41 @@
 > explicit don't. Cross-project version drift lives in
 > `~/Projects/Launchpad-RS/docs/sharp-edges.md` instead.
 
+- **A Router backend row is configuration, not liveness.** `GET /v1/backends` returns
+  `enabled: true` for a vast recipe whose box is **cold and unreachable** — enabled means
+  "enabled in config", not "answering now". Our first `compute` output printed `enabled`, which
+  reads as *available*, and that is the exact D3 failure mode (a status that is a lie the moment
+  the box dies) reproduced in our own CLI. It now prints `configured` and says so explicitly.
+  **Don't feed a backend listing straight into `--available-compute` as though it proved a box
+  was up; probe first (`/v1/backends/{id}/probe`).**
+
+- **The fine-tune base differs by provider — check the catalogue, don't assume.** Together
+  carries no dense `Qwen/Qwen3.6-27B`, which was our default; its LoRA-capable Qwen3.6 base is
+  `Qwen/Qwen3.6-35B-A3B`. The dense 27B is right for the local/vast path, where the garden node
+  serves it today. `router::serves_model` and `router::lora_capable_bases` answer this **for
+  free, locally**, off ApexRouter's existing backend listing. **Don't hard-code one base as
+  "the" base, and don't discover an unsupported one by paying for a failed job.**
+
+- **A `-Lora` suffix names a serving endpoint, not a base.** `Qwen/Qwen3.6-35B-A3B-Lora` is
+  where adapters *of* `Qwen/Qwen3.6-35B-A3B` are served. Fine-tune the unsuffixed name.
+  **Don't submit the suffixed one as a base.**
+
+- **Never send `Origin` or `Sec-Fetch-Site` to ApexRouter.** Its mutation gate reads: if
+  `Origin` is present it must be same-origin; if `Sec-Fetch-Site` is present it must be
+  `same-origin` or `none`; **otherwise a bearer with `write` scope is required.** Non-browser
+  clients send neither and pass unchanged, which is why our client works on loopback with no
+  token. **Don't add either header "for completeness" — every mutation would start 403'ing
+  unless a token happened to be configured.**
+
+- **An ApexRouter `CredentialSource` is a pointer, never key material.** Its own schema says
+  "A DESCRIPTION of where a credential lives." We send `{kind:"env", var:"TOGETHER_API_KEY"}`,
+  so Router learns the variable's *name* and the key never leaves our process. **Don't put a
+  key in a NodeSpec.**
+
+- **Reuse a backend that already points at the URL.** Router already had a `together` backend;
+  registering a second for the same base URL leaves two rows that disagree the moment either is
+  edited. `backend_for_base_url` checks first. **Don't blind-register.**
+
 - **A Cerebro database is opened `SQLITE_OPEN_READ_ONLY`, always.** It is another tool's state
   directory and usually a live daily driver — the same posture ApexRouter takes toward
   `~/.vastai-gguf/`: read it, never write it. Read-only open also means a typo'd path *fails*

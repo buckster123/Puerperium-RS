@@ -48,6 +48,10 @@ enum Command {
     Estimate(EstimateArgs),
     /// Show which credentials are configured. Never prints a value.
     Keys,
+    /// What compute ApexRouter already has. Read-only; Puerperium never creates any.
+    Compute,
+    /// Hand a trained adapter to ApexRouter as a routable alias, and record the lineage.
+    Deploy(DeployArgs),
     /// Trace a model back through its ancestors to the memories it came from.
     Lineage {
         model: String,
@@ -160,6 +164,31 @@ struct SubmitArgs {
     #[arg(long, value_delimiter = ',')]
     available_compute: Vec<String>,
     /// Show the exact request body and write nothing. Touches no upstream.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+#[derive(Args)]
+struct DeployArgs {
+    /// Registered model to hand over.
+    #[arg(long)]
+    model: String,
+    /// Alias it becomes reachable as through Router.
+    #[arg(long)]
+    alias: String,
+    /// Base URL of whatever serves it. Stored WITHOUT /v1.
+    #[arg(long, default_value = "https://api.together.xyz")]
+    base_url: String,
+    /// The name the backend actually serves. Omit to pass the alias through unchanged.
+    #[arg(long)]
+    served_model: Option<String>,
+    /// Env var holding the backend's credential. Router stores the NAME, never the value.
+    #[arg(long, default_value = "TOGETHER_API_KEY")]
+    credential_env: String,
+    /// Skip the Cerebro lineage event.
+    #[arg(long)]
+    no_lineage: bool,
+    /// Print exactly what would be sent, and contact nothing.
     #[arg(long)]
     dry_run: bool,
 }
@@ -307,6 +336,8 @@ fn main() -> Result<()> {
         Command::Job(JobCmd::Upload { dataset }) => job_upload(&paths, &dataset),
         Command::Estimate(args) => estimate_cost(&paths, args),
         Command::Keys => keys(&loaded),
+        Command::Compute => compute(),
+        Command::Deploy(args) => deploy(&paths, args),
         Command::Lineage { model, json } => lineage(&paths, &model, json),
     }
 }
@@ -835,6 +866,144 @@ fn apprentice_create(paths: &Paths, args: ApprenticeCreateArgs) -> Result<()> {
             .as_ref()
             .map(|d| d.name.as_str())
             .unwrap_or("<dataset>")
+    );
+    Ok(())
+}
+
+// --------------------------------------------------------------- deploy
+
+fn compute() -> Result<()> {
+    let client = puerperium::router::RouterClient::from_env()?;
+    let backends = client.backends()?;
+    if backends.is_empty() {
+        println!("ApexRouter has no backends. Puerperium never creates compute (charter D4) —");
+        println!("use `apexrouter vast rent` or start a local endpoint first.");
+        return Ok(());
+    }
+    for b in &backends {
+        let shown: Vec<&str> = b.models.iter().take(3).map(|m| m.id.as_str()).collect();
+        let more = b.models.len().saturating_sub(shown.len());
+        // A catalogue backend declares hundreds of models; printing them all buries the
+        // one line that matters.
+        let tail = if more > 0 {
+            format!(", +{more} more")
+        } else {
+            String::new()
+        };
+        println!(
+            "{:<20} {:<26} {:<10} {}{}",
+            b.id,
+            b.label,
+            // CONFIGURATION, not liveness. A vast recipe can be configured-and-enabled while
+            // the box is cold and unreachable.
+            if b.enabled { "configured" } else { "disabled" },
+            shown.join(", "),
+            tail
+        );
+    }
+    println!(
+        "\n`configured` is Router's config state, NOT proof the box is up — a vast recipe reads\n\
+         configured while cold. Probe before treating one as available compute."
+    );
+
+    println!("\nLoRA-capable bases advertised (fine-tune these, not the -Lora serving name):");
+    let mut any = false;
+    for b in &backends {
+        for base in puerperium::router::lora_capable_bases(b) {
+            println!("  {base}   [{}]", b.id);
+            any = true;
+        }
+    }
+    if !any {
+        println!("  none advertised");
+    }
+    Ok(())
+}
+
+fn deploy(paths: &Paths, args: DeployArgs) -> Result<()> {
+    // The model must be registered here first — handing Router an alias for something with no
+    // provenance is exactly the untraceable outcome this project exists to prevent.
+    let record = registry::load_model(paths, &args.model)?;
+
+    let spec = puerperium::router::node_spec(
+        &args.base_url,
+        &format!("puerperium: {}", record.name),
+        &args
+            .served_model
+            .clone()
+            .into_iter()
+            .collect::<Vec<String>>(),
+        Some(&args.credential_env),
+    );
+    let route_preview =
+        puerperium::router::model_route(&args.alias, "<backend-id>", args.served_model.as_deref());
+
+    if args.dry_run {
+        println!(
+            "POST /v1/backends:\n{}",
+            serde_json::to_string_pretty(&spec)?
+        );
+        println!(
+            "\nPUT /v1/routes/{}:\n{}",
+            args.alias,
+            serde_json::to_string_pretty(&route_preview)?
+        );
+        println!("\ndry run — nothing sent, nothing recorded");
+        return Ok(());
+    }
+
+    let client = puerperium::router::RouterClient::from_env()?;
+
+    // Reuse a backend already pointing at this URL. Two rows for one URL disagree the moment
+    // either is edited.
+    let backend_id = match client.backend_for_base_url(&args.base_url)? {
+        Some(existing) => {
+            println!(
+                "backend {} (reusing existing, not duplicating)",
+                existing.id
+            );
+            existing.id
+        }
+        None => {
+            let id = client.register_backend(&spec)?;
+            println!("backend {id} (registered)");
+            id
+        }
+    };
+
+    let route =
+        puerperium::router::model_route(&args.alias, &backend_id, args.served_model.as_deref());
+    client.upsert_route(&args.alias, &route)?;
+    println!("alias  {} -> {}", args.alias, backend_id);
+
+    // Record what we asked for. NOT whether it is live — that stays Router's truth (D3).
+    let mut updated = record.clone();
+    updated.alias_requested = Some(args.alias.clone());
+    registry::save_model(paths, &updated)?;
+
+    if !args.no_lineage {
+        let cerebro = puerperium::source::cerebro_mcp::CerebroMcp::from_env();
+        let event = puerperium::source::cerebro_mcp::lineage_event_args(
+            "model_registered",
+            &record.name,
+            record.dataset.as_ref().map(|d| d.name.as_str()),
+            record.dataset.as_ref().map(|d| d.sha256.as_str()),
+            &record.trainer_agent,
+            &record.trainer_agent,
+            &format!("registered with ApexRouter as alias {}", args.alias),
+        );
+        match cerebro.call_tool("remember", event) {
+            Ok(_) => println!("lineage recorded in cerebro"),
+            // A failed lineage write must not undo a successful deploy — say so and move on.
+            Err(e) => println!(
+                "lineage NOT recorded ({e}) — the deploy stands; re-run with the event later"
+            ),
+        }
+    }
+
+    println!(
+        "\nverify:  curl -s 127.0.0.1:8888/v1/models | grep {}",
+        args.alias
     );
     Ok(())
 }

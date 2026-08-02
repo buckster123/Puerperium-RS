@@ -58,6 +58,7 @@ pub mod paths;
 pub mod provenance;
 pub mod provider;
 pub mod registry;
+pub mod router;
 pub mod secrets;
 pub mod source;
 pub mod store;
