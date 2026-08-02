@@ -43,7 +43,12 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
       exact NodeSpec/ModelRoute. Reuses an existing backend rather than duplicating; credential
       is sent as a *pointer* (`{kind:env, var:…}`), never key material. Resolved a charter open
       question along the way — see the 2026-08-03 amendment.
-- [ ] **S6 — field**: one real adapter, end to end. A specialist trained from FORGE's own
+- [~] **S6 — field**: pipeline proven end to end on real data and real money (2026-08-03) —
+      231 examples → uploaded → trained on Together → terminal written once → registered →
+      lineage resolving. **The measurement is deliberately unmet**: evaluating needs a
+      dedicated endpoint (hourly, B200-class pricing) and serving is going to vast/local
+      instead. Final gate awaits a proper run on a healthy dataset. Original text below.
+- [ ] **S6 gate — one real adapter, end to end.** A specialist trained from FORGE's own
       memory beats its base on a real task — **measured, not asserted**. This is the point of
       the whole thing; nothing above counts until this row is ticked.
 
@@ -86,6 +91,16 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
   as-steps is not the same thing and deserves its own design.
 - **Near-duplicate collapse** — Cerebro reinforces rather than re-mints at ≥0.86 cosine, but a
   dataset mined across months can still carry restatements of one lesson.
+
+**Next up — the gap the first real run exposed**
+
+- **`job download`** — a Together fine-tune leaves its artifact as a model name hosted on
+  *their* side. Serving on vast/local (charter amendment 2026-08-03) means the adapter weights
+  have to come home. This is now the missing link between a finished job and a servable model:
+  without it a completed job produces something nameable in lineage but not runnable.
+- **A healthy dataset** — 231 examples was a PoC. More *lived* material (not more epochs, not
+  dream-derived) is what the final S6 run needs. And with a minimum charge dominating, one
+  larger run costs the same as several small ones.
 
 **S3 follow-ups**
 
