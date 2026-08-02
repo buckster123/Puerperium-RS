@@ -23,6 +23,25 @@
   needs specifics. Don't read a big memory count as a big dataset: the node with 6x more
   memories yielded a third as much trainable material.**
 
+- **A MINIMUM CHARGE dominates small fine-tunes, and no local heuristic can see it.** The first
+  shipped job metered **50,319 tokens = $0.076** and was billed **$4.00** — 53x. Our chars/4
+  estimator said $0.28 and was wrong twice over: 3.6x high on tokens *and* blind to the floor.
+  `POST /v1/fine-tunes/estimate-price` is **free** and authoritative (it returned exactly `4`).
+  **Quote before you submit; never trust the local estimate for a spend decision.** Practical
+  consequence: at a fixed floor, a 231-example run costs the same as a ~2.7M-token one — batch
+  specialists or use more data per run rather than doing many tiny ones.
+
+- **`total_price` on a job record is NANO-DOLLARS.** A completed job reporting `4000000000` cost
+  **$4.00**. Reading it as dollars is wrong by a factor of a billion, in the reassuring
+  direction. **Don't render it raw.**
+
+- **A fine-tuned adapter is NOT serverless.** Calling it returns *"Unable to access
+  non-serverless model … create and start a new dedicated endpoint"*. Serving a tuned model is
+  an **hourly** charge, entirely separate from the one-off training cost — which is what the
+  charter's "hosting is a separate ongoing charge" caveat means concretely. **Don't start one to
+  run an evaluation without an explicit, counted go: an idle endpoint bills overnight, and that
+  failure has already happened once in this ecosystem.**
+
 - **Together's API applies NO defaults — the SDK does, client-side.** Omitting a field is not
   "use the default", it is sending zero. An absent `batch_size` is refused with *"batch size is
   zero"*, an absent `n_checkpoints` with *"number of checkpoints is less than one"*. The body

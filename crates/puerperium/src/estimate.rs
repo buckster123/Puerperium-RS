@@ -1,5 +1,13 @@
 //! Cost estimation. Pure arithmetic, honest about what it does not know.
 //!
+//! # This is a rough guide, not a quote
+//!
+//! It knows the price bands and a chars/4 token heuristic. It does **not** know Together's
+//! tokenizer (measured 3.6x optimistic against a real job) and it cannot know the **minimum
+//! charge**, which dominates small datasets: a job metering at $0.076 of tokens was billed
+//! **$4.00**. For a real number, upload the file and ask
+//! [`crate::provider::together_http::TogetherClient::estimate_price`] — it is free.
+//!
 //! Charter open question: **hosting is a second, ongoing charge.** A Together-tuned model
 //! bills for its dedicated endpoint separately from training, so this reports training only
 //! and *says so*. A single blended number would be the dishonest kind of simplification.
@@ -45,6 +53,9 @@ pub fn together_lora(dataset_chars: u64, epochs: u32, params_b: f64) -> Estimate
             "token count is approximate (~{CHARS_PER_TOKEN:.0} chars/token), not a tokenizer count"
         ),
         "training only — hosting a tuned model is a separate ongoing charge".to_string(),
+        "IGNORES THE MINIMUM CHARGE, which dominates small datasets — a real job metering at \
+         $0.08 was billed $4.00. Use `job estimate` on an uploaded file for the real number."
+            .to_string(),
     ];
     if price.is_none() {
         caveats.push(format!(

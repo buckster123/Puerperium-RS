@@ -212,6 +212,37 @@ impl TogetherClient {
     }
 }
 
+impl TogetherClient {
+    /// Together's own price estimate for an uploaded file. Free, and authoritative — it
+    /// knows the real tokenizer *and* the minimum charge, neither of which a local heuristic
+    /// can guess.
+    pub fn estimate_price(
+        &self,
+        training_file_id: &str,
+        base_model: &str,
+        n_epochs: u32,
+        lora_r: u32,
+        lora_alpha: u32,
+        target_modules: &[String],
+    ) -> Result<together::PriceEstimate, ProviderError> {
+        let body = together::build_estimate_body(
+            training_file_id,
+            base_model,
+            n_epochs,
+            lora_r,
+            lora_alpha,
+            target_modules,
+        );
+        let resp = self
+            .http
+            .post(self.url("fine-tunes/estimate-price"))
+            .bearer_auth(&self.api_key)
+            .json(&body)
+            .send();
+        together::parse_price_estimate(&read(resp)?)
+    }
+}
+
 impl TrainingProvider for TogetherClient {
     fn submit(&self, req: &SubmitRequest) -> Result<String, ProviderError> {
         // Resolve against the model's own limits first. Free, and it converts an opaque

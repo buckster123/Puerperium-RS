@@ -130,6 +130,15 @@ enum JobCmd {
     Cancel { id: String },
     /// Upload a dataset and print the training file id `submit` needs. Costs nothing.
     Upload { dataset: String },
+    /// Together's OWN price estimate for an uploaded file. Free, and authoritative — it knows
+    /// the real tokenizer and the minimum charge, which a local heuristic cannot.
+    Quote {
+        training_file_id: String,
+        #[arg(long, default_value = "Qwen/Qwen3.6-35B-A3B")]
+        base_model: String,
+        #[arg(long, default_value_t = 3)]
+        epochs: u32,
+    },
 }
 
 #[derive(Args)]
@@ -340,6 +349,11 @@ fn main() -> Result<()> {
         Command::Job(JobCmd::Status { id }) => job_status(&paths, &id),
         Command::Job(JobCmd::Cancel { id }) => job_cancel(&paths, &id),
         Command::Job(JobCmd::Upload { dataset }) => job_upload(&paths, &dataset),
+        Command::Job(JobCmd::Quote {
+            training_file_id,
+            base_model,
+            epochs,
+        }) => job_quote(&training_file_id, &base_model, epochs),
         Command::Estimate(args) => estimate_cost(&paths, args),
         Command::Keys => keys(&loaded),
         Command::Compute => compute(),
@@ -1040,5 +1054,31 @@ fn deploy(paths: &Paths, args: DeployArgs) -> Result<()> {
         "\nverify:  curl -s 127.0.0.1:8888/v1/models | grep {}",
         args.alias
     );
+    Ok(())
+}
+
+/// The authoritative quote. Free, and the only number that includes the minimum charge.
+fn job_quote(training_file_id: &str, base_model: &str, epochs: u32) -> Result<()> {
+    let client = together()?;
+    let limits = client.limits(base_model)?;
+    let est = client.estimate_price(
+        training_file_id,
+        base_model,
+        epochs,
+        16,
+        32,
+        &limits.target_modules,
+    )?;
+    println!("train tokens  {}", est.train_tokens);
+    println!("TOTAL         ${:.2}", est.total_usd);
+    if !est.allowed_to_proceed {
+        println!("REFUSED       this would exceed the account limit");
+    }
+    let metered = (est.train_tokens as f64 / 1_000_000.0) * 1.50;
+    if est.total_usd > metered * 2.0 {
+        println!(
+            "note          a MINIMUM CHARGE dominates: metered tokens are only ~${metered:.2}"
+        );
+    }
     Ok(())
 }
