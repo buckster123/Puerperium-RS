@@ -56,6 +56,7 @@ pub mod paths;
 pub mod provenance;
 pub mod provider;
 pub mod registry;
+pub mod secrets;
 pub mod store;
 
 pub use error::{Error, Result};

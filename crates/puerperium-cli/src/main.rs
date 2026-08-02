@@ -46,6 +46,8 @@ enum Command {
     Job(JobCmd),
     /// Estimate what a fine-tune would cost. Free; touches no upstream.
     Estimate(EstimateArgs),
+    /// Show which credentials are configured. Never prints a value.
+    Keys,
     /// Trace a model back through its ancestors to the memories it came from.
     Lineage {
         model: String,
@@ -200,6 +202,13 @@ struct ModelAddArgs {
 }
 
 fn main() -> Result<()> {
+    // Credentials before anything else, so every verb sees them. A real environment variable
+    // always wins, so a one-off `TOGETHER_API_KEY=… puerperium …` still overrides the file.
+    let loaded = puerperium::secrets::load();
+    for w in &loaded.warnings {
+        eprintln!("warning: {w}");
+    }
+
     let cli = Cli::parse();
     let paths = match cli.state_dir {
         Some(p) => Paths::new(p),
@@ -226,6 +235,7 @@ fn main() -> Result<()> {
         Command::Job(JobCmd::Status { id }) => job_status(&paths, &id),
         Command::Job(JobCmd::Cancel { id }) => job_cancel(&paths, &id),
         Command::Estimate(args) => estimate_cost(&paths, args),
+        Command::Keys => keys(&loaded),
         Command::Lineage { model, json } => lineage(&paths, &model, json),
     }
 }
@@ -586,6 +596,40 @@ fn estimate_cost(paths: &Paths, args: EstimateArgs) -> Result<()> {
     }
     for c in &est.caveats {
         println!("  - {c}");
+    }
+    Ok(())
+}
+
+/// Report credential state. Lengths and heads only — never a value (doctrine #6).
+fn keys(loaded: &puerperium::secrets::Loaded) -> Result<()> {
+    match &loaded.file {
+        Some(f) => println!("env file: {}", f.display()),
+        None => {
+            println!("env file: none found");
+            for c in puerperium::secrets::candidates() {
+                println!("  looked in {}", c.display());
+            }
+        }
+    }
+    if !loaded.set.is_empty() {
+        println!("loaded from file: {}", loaded.set.join(", "));
+    }
+    if !loaded.skipped.is_empty() {
+        println!(
+            "already in environment (file ignored): {}",
+            loaded.skipped.join(", ")
+        );
+    }
+
+    println!();
+    for (name, var) in [("together", "TOGETHER_API_KEY")] {
+        match std::env::var(var) {
+            Ok(v) if !v.trim().is_empty() => {
+                let head: String = v.chars().take(4).collect();
+                println!("{name:<10} configured  ({} chars, starts {head}…)", v.len());
+            }
+            _ => println!("{name:<10} not configured  (set {var})"),
+        }
     }
     Ok(())
 }

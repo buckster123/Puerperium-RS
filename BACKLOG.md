@@ -80,6 +80,10 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
 
 **S3 follow-ups**
 
+- [x] **Credential loading** — env-file support (`~/.config/puerperium/env`, 0600) plus a
+      `keys` verb that reports configuration without printing values. A real environment
+      variable always wins, so a one-off override still works.
+
 - **Dataset upload to Together** — `job submit` currently takes `--training-file-id` for
   data uploaded by other means. The upload call (`POST /v1/files`) is the missing link between
   the dataset garden and a real submission; it wants the same pure-builder + thin-shell shape.
