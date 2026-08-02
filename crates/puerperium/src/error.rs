@@ -7,14 +7,17 @@ use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("dataset name is empty or contains a path separator: {0:?}")]
-    InvalidDatasetName(String),
+    #[error("name is empty, hidden, or contains a path separator: {0:?}")]
+    InvalidName(String),
 
     #[error("dataset already exists: {0} (datasets are immutable — pick another name)")]
     DatasetExists(PathBuf),
 
     #[error("no examples survived the quality gate ({rejected} rejected) — nothing was written")]
     NoExamples { rejected: usize },
+
+    #[error("no record named {name:?} in {dir}")]
+    RecordNotFound { dir: PathBuf, name: String },
 
     #[error("io error at {path}: {source}")]
     Io {

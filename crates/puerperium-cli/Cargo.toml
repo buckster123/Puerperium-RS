@@ -13,4 +13,5 @@ path = "src/main.rs"
 anyhow.workspace = true
 clap.workspace = true
 puerperium = { path = "../puerperium" }
+serde.workspace = true
 serde_json.workspace = true

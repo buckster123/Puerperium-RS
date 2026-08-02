@@ -12,6 +12,34 @@
 > explicit don't. Cross-project version drift lives in
 > `~/Projects/Launchpad-RS/docs/sharp-edges.md` instead.
 
+- **A `ModelRecord` never stores liveness.** No `deployed`, no `live`, no `serving`, no
+  `status`. Whether an alias actually answers is ApexRouter's truth — it depends on a process
+  we do not supervise, on a box we did not rent (D2/D4), so anything we persist is a lie the
+  moment Router restarts, the tunnel drops, or the box is parked. The record stores what
+  Puerperium *did*: artifact, `alias_requested`, dataset hash, trainer, parent. A test asserts
+  those words never appear in the serialized form. Same rule downstream: `ApprenticeRecord` has
+  no `trained: bool` because that is `model.is_some()`. **Don't add a field that restates
+  another field, and don't cache a remote system's state in a local record.**
+
+- **The lineage walk needs its cycle guard.** Registry records are plain JSON that a human can
+  edit, and nothing stops two models naming each other as parent. Without the `seen` set the
+  walk hangs forever on `a → b → a`. The guard reports the cycle in `incomplete` rather than
+  erroring, because a partially-broken registry should still answer as much as it can.
+  **Don't remove the guard on the grounds that "records are generated" — they are also
+  hand-fixable, which is the point of keeping them as readable JSON.**
+
+- **A dataset hash mismatch is reported, never repaired.** If a model names a dataset whose
+  bytes no longer hash to what the record says, that is precisely the situation lineage exists
+  to catch — the model was trained on data that is no longer there. `dataset_hash_mismatch`
+  surfaces it. **Don't "fix" it by refreshing the recorded hash from disk; that destroys the
+  only evidence that the provenance is broken.**
+
+- **A missing record is `RecordNotFound`, never a raw io error.** `dataset::read_meta` leaked
+  an ENOENT chain to whoever referenced a deleted dataset, while `store::load` gave a clean
+  named error for the same situation. Two shapes for one condition means callers handle one and
+  not the other. **Don't return a bare `Error::Io` for a lookup that failed because the thing
+  is simply not there.**
+
 - **Every new `DatasetMeta` field must be `#[serde(default)]`.** Datasets are durable artifacts
   referenced by hash for the life of the registry, and their sidecars are read by binaries newer
   than the one that wrote them. Adding `framing` without a default made *every* previously-written

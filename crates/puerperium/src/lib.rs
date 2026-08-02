@@ -49,6 +49,9 @@ pub mod dataset;
 pub mod error;
 pub mod example;
 pub mod memory;
+pub mod paths;
 pub mod provenance;
+pub mod registry;
+pub mod store;
 
 pub use error::{Error, Result};

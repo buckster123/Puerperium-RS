@@ -126,6 +126,91 @@ pub struct Example {
 
 ---
 
+## Registry contract (S2)
+
+Datasets, models, apprentices, and the lineage that joins them. **Facts only** (D3).
+
+### What a record may not contain
+
+The rule is sharper for models than for jobs, and it is worth stating explicitly because it
+is easy to get wrong:
+
+> **A `ModelRecord` never stores whether the model is deployed, live, or serving.**
+
+Whether an alias actually answers is **ApexRouter's truth**, not ours — it depends on a
+process we do not supervise, on a box we did not rent (D2/D4). A `deployed: true` on disk is
+a lie the moment Router restarts, the tunnel drops, or the box is parked. What the record
+stores is what Puerperium *did*: the artifact path, the alias it **requested**, the dataset
+hash, the trainer, the parent. Liveness is **computed** by asking Router, and until that
+client exists (S5) the honest answer is that we do not know.
+
+Same shape elsewhere: an `ApprenticeRecord` has no `trained: bool` — that is `model.is_some()`,
+derived on read. Any boolean that restates another field is a chance for the two to disagree.
+
+### Records
+
+```rust
+/// A registered adapter. FACTS ONLY — no liveness, no deployment status.
+pub struct ModelRecord {
+    pub name: String,                    // registry key and Router alias candidate
+    pub base_model: String,
+    pub dataset: Option<DatasetRef>,     // name + sha256 — the hash is the identity
+    pub job_id: Option<String>,
+    pub trainer_agent: String,           // D6 — never `agent_id`
+    pub artifact: Option<PathBuf>,
+    pub parent: Option<String>,          // the model this one was trained from
+    pub alias_requested: Option<String>, // what we asked Router for; NOT proof it is live
+    pub created_at: DateTime<Utc>,
+}
+
+pub struct ApprenticeRecord {
+    pub id: String,
+    pub master_agent: String,            // whose knowledge it was raised on
+    pub name: String,
+    pub specialization: String,
+    pub base_model: String,
+    pub dataset: Option<DatasetRef>,
+    pub job_id: Option<String>,
+    pub model: Option<String>,           // the ModelRecord once trained; None = not yet
+    pub created_at: DateTime<Utc>,
+}
+```
+
+### Lineage — the product
+
+`nursery_lineage` walks a model back through its ancestors, and at each generation names the
+dataset (by hash) and how many memories fed it. Everything else in the registry exists so
+this can answer *"why is this specialist like this?"*.
+
+```rust
+pub struct Lineage {
+    pub entries: Vec<LineageEntry>,      // generation 0 = the model asked about
+    /// Why the walk stopped early. `None` means it reached a root honestly.
+    pub incomplete: Option<String>,
+}
+```
+
+**Degrades honestly rather than erroring.** A dataset referenced by a record may have been
+deleted; a parent may be missing; a hand-edited file may create a parent cycle. None of those
+are errors — the walk records what it found, marks what it could not resolve, and stops.
+A lineage that silently omits a broken link is worse than one that says the link is broken.
+The cycle guard is not optional: records are plain JSON on disk and nothing stops a human
+from pointing two models at each other.
+
+### Storage
+
+```
+datasets/<name>.jsonl + <name>.meta.json
+models/<name>.json                       # the record
+models/<name>/                           # artifacts, when we hold them
+apprentices/<id>.json
+```
+
+All records: atomic `tmp → fsync → rename`, name-validated against path escape, and
+**every new field `#[serde(default)]`** — the same durability rule datasets already earned.
+
+---
+
 ## Job lifecycle
 
 ```
