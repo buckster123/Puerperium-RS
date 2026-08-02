@@ -130,7 +130,12 @@ impl TogetherClient {
             .http
             .post(self.url("files"))
             .bearer_auth(&self.api_key)
-            .query(&[
+            // FORM-ENCODED, not query params and not JSON. Both of those return
+            // 400 "Unable to save the file - invalid purpose specified" — the same message
+            // whatever `purpose` value you send, because the server never sees the field at
+            // all. Verified against the live API 2026-08-03; the SDK's `params=` is
+            // form-encoded for this call.
+            .form(&[
                 ("purpose", "fine-tune"),
                 ("file_name", file_name),
                 ("file_type", "jsonl"),
@@ -188,9 +193,35 @@ impl TogetherClient {
     }
 }
 
+impl TogetherClient {
+    /// A model's published fine-tuning limits. Free, and the honest way to learn whether a
+    /// base is fine-tunable before paying to find out.
+    pub fn limits(&self, model: &str) -> Result<together::Limits, ProviderError> {
+        let resp = self
+            .http
+            .get(self.url("fine-tunes/models/limits"))
+            .bearer_auth(&self.api_key)
+            .query(&[("model_name", model)])
+            .send()
+            .map_err(|e| ProviderError::Unreachable(e.to_string()))?;
+        // A refusal here carries a useful message in the BODY, so read it either way.
+        let body = resp
+            .text()
+            .map_err(|e| ProviderError::Unreachable(e.to_string()))?;
+        together::parse_limits(&body)
+    }
+}
+
 impl TrainingProvider for TogetherClient {
     fn submit(&self, req: &SubmitRequest) -> Result<String, ProviderError> {
-        let body = together::build_submit_body(req);
+        // Resolve against the model's own limits first. Free, and it converts an opaque
+        // "(Binding)" refusal into either a clean local fix or an honest "not fine-tunable".
+        let limits = self.limits(&req.base_model)?;
+        let resolved = SubmitRequest {
+            hyperparams: together::resolve(req.hyperparams.clone(), &limits),
+            ..req.clone()
+        };
+        let body = together::build_submit_body_with(&resolved, &limits.target_modules);
         let resp = self
             .http
             .post(self.url("fine-tunes"))

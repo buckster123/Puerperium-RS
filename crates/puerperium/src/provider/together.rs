@@ -15,9 +15,95 @@ use crate::provider::{ProviderError, ProviderStatus, SubmitRequest};
 
 /// `POST /v1/fine-tunes` body.
 ///
+/// What a model's fine-tuning limits say. Parsed from
+/// `GET /v1/fine-tunes/models/limits?model_name=…`, which is **free** and is the honest way
+/// to learn whether a base is fine-tunable at all.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Limits {
+    pub max_batch_size: u32,
+    pub min_batch_size: u32,
+    pub max_rank: u32,
+    /// The ONLY modules this model accepts. `"all-linear"` is rejected by models that
+    /// publish a specific list.
+    pub target_modules: Vec<String>,
+    pub max_num_epochs: u32,
+}
+
+/// Parse a limits response.
+///
+/// A model that is not fine-tunable answers with a `message` instead of limits — that is a
+/// clean, free "no" and is reported as such rather than as a parse failure.
+pub fn parse_limits(body: &str) -> Result<Limits, ProviderError> {
+    let v: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| ProviderError::Malformed(format!("limits response: {e}")))?;
+
+    if let Some(msg) = v.get("message").and_then(|m| m.as_str()) {
+        return Err(ProviderError::Rejected(msg.to_string()));
+    }
+    let lora = v.get("lora_training").ok_or_else(|| {
+        ProviderError::Rejected(
+            "model publishes no lora_training limits — it is not LoRA fine-tunable".into(),
+        )
+    })?;
+
+    let num = |k: &str| lora.get(k).and_then(serde_json::Value::as_u64).unwrap_or(0) as u32;
+    Ok(Limits {
+        max_batch_size: num("max_batch_size"),
+        min_batch_size: num("min_batch_size"),
+        max_rank: num("max_rank"),
+        target_modules: lora
+            .get("target_modules")
+            .and_then(|t| t.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|m| m.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        max_num_epochs: v
+            .get("max_num_epochs")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0) as u32,
+    })
+}
+
+/// Resolve requested hyperparameters against a model's published limits.
+///
+/// Pure. This is what the SDK does client-side, and skipping it is why a hand-built body gets
+/// `"Could not create the FineTune object (Binding)"` — an opaque refusal that names nothing.
+/// Doing it here turns a class of paid-path 400s into local arithmetic.
+pub fn resolve(mut hp: Hyperparams, limits: &Limits) -> Hyperparams {
+    // `"max"` is resolved BY THE CLIENT; the API wants a number. min == max on some models,
+    // so there is exactly one legal value.
+    hp.batch_size = Some(match hp.batch_size {
+        Some(b) => b.clamp(limits.min_batch_size.max(1), limits.max_batch_size.max(1)),
+        None => limits.max_batch_size.max(1),
+    });
+    if limits.max_rank > 0 && hp.lora_r > limits.max_rank {
+        hp.lora_r = limits.max_rank;
+    }
+    if limits.max_num_epochs > 0 && hp.n_epochs > limits.max_num_epochs {
+        hp.n_epochs = limits.max_num_epochs;
+    }
+    hp
+}
+
+/// `POST /v1/fine-tunes` body, with the model's own target modules.
+pub fn build_submit_body_with(req: &SubmitRequest, target_modules: &[String]) -> serde_json::Value {
+    let mut body = build_submit_body(req);
+    // A model publishing a specific list rejects "all-linear".
+    if !target_modules.is_empty() {
+        body["training_type"]["lora_trainable_modules"] =
+            serde_json::json!(target_modules.join(","));
+    }
+    body
+}
+
+/// `POST /v1/fine-tunes` body.
+///
 /// Pure. `training_type` uses the SDK's `"Lora"` discriminator — not `"lora"`; the casing is
 /// load-bearing and an upstream that does not recognise it would silently full-fine-tune,
-/// which costs roughly ten times as much.
+/// at roughly ten times the cost.
 pub fn build_submit_body(req: &SubmitRequest) -> serde_json::Value {
     let Hyperparams {
         n_epochs,
@@ -27,22 +113,44 @@ pub fn build_submit_body(req: &SubmitRequest) -> serde_json::Value {
         batch_size,
     } = &req.hyperparams;
 
-    let mut body = serde_json::json!({
+    // THE API APPLIES NO DEFAULTS — the SDK does, client-side. Omitting a field is not
+    // "use the default", it is sending zero: an absent `batch_size` is rejected with
+    // "batch size is zero", an absent `n_checkpoints` with "number of checkpoints is less
+    // than one". So the body carries the SDK's full default set explicitly. Verified against
+    // the live API 2026-08-03, one rejection at a time.
+    serde_json::json!({
         "training_file": req.training_file_id,
         "model": req.base_model,
         "suffix": req.output_name,
         "n_epochs": n_epochs,
         "learning_rate": learning_rate,
+        "batch_size": match batch_size {
+            Some(bs) => serde_json::json!(bs),
+            None => serde_json::json!("max"),
+        },
         "training_type": {
             "type": "Lora",
             "lora_r": lora_r,
             "lora_alpha": lora_alpha,
+            "lora_dropout": 0.0,
+            "lora_trainable_modules": "all-linear",
         },
-    });
-    if let Some(bs) = batch_size {
-        body["batch_size"] = serde_json::json!(bs);
-    }
-    body
+        // `training_method` and `lr_scheduler` are OBJECTS, not strings. Sending
+        // `"training_method": "sft"` is refused with the opaque
+        // "Could not create the FineTune object (Binding)" — a body-binding type mismatch
+        // that names no field. The SDK builds TrainingMethodSFT / CosineLRScheduler.
+        "training_method": { "method": "sft" },
+        "lr_scheduler": {
+            "lr_scheduler_type": "cosine",
+            "lr_scheduler_args": { "min_lr_ratio": 0.0, "num_cycles": 0.5 },
+        },
+        "n_checkpoints": 1,
+        "n_evals": 0,
+        "validation_file": "",
+        "warmup_ratio": 0.0,
+        "max_grad_norm": 1.0,
+        "weight_decay": 0.0,
+    })
 }
 
 #[derive(Deserialize)]
@@ -171,10 +279,28 @@ mod tests {
         assert_eq!(body["model"], "Qwen/Qwen3.6-27B");
         assert_eq!(body["suffix"], "worker-v1");
         assert_eq!(body["training_file"], "file-abc");
-        assert!(
-            body.get("batch_size").is_none(),
-            "unset optional must be omitted"
+        // Omitting it is rejected upstream with "batch size is zero".
+        assert_eq!(body["batch_size"], "max", "must always be sent");
+        // The API applies no defaults; every one of these is required in the body.
+        assert_eq!(body["n_checkpoints"], 1, "absent = 'less than one'");
+        assert_eq!(
+            body["training_method"]["method"], "sft",
+            "object, not a string"
         );
+        assert_eq!(body["lr_scheduler"]["lr_scheduler_type"], "cosine");
+        assert_eq!(body["n_evals"], 0);
+        assert_eq!(body["max_grad_norm"], 1.0);
+        assert_eq!(
+            body["training_type"]["lora_trainable_modules"],
+            "all-linear"
+        );
+    }
+
+    #[test]
+    fn an_explicit_batch_size_overrides_the_max_default() {
+        let mut r = req();
+        r.hyperparams.batch_size = Some(8);
+        assert_eq!(build_submit_body(&r)["batch_size"], 8);
     }
 
     #[test]

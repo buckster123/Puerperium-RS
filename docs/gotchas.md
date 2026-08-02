@@ -12,6 +12,38 @@
 > explicit don't. Cross-project version drift lives in
 > `~/Projects/Launchpad-RS/docs/sharp-edges.md` instead.
 
+- **Together's API applies NO defaults — the SDK does, client-side.** Omitting a field is not
+  "use the default", it is sending zero. An absent `batch_size` is refused with *"batch size is
+  zero"*, an absent `n_checkpoints` with *"number of checkpoints is less than one"*. The body
+  must carry the SDK's full default set explicitly. **Don't assume an optional-looking field is
+  optional.**
+
+- **`training_method` and `lr_scheduler` are OBJECTS, not strings.** `"training_method": "sft"`
+  is refused with `Could not create the FineTune object (Binding)` — a body-binding type
+  mismatch that names no field, so it reads like a model problem when it is a shape problem.
+  Send `{"method":"sft"}` and
+  `{"lr_scheduler_type":"cosine","lr_scheduler_args":{...}}`. **Don't debug a "(Binding)" error
+  by changing the model.**
+
+- **The upload-URL request is FORM-ENCODED.** Query params and a JSON body both return
+  `400 "Unable to save the file - invalid purpose specified"` — the *same* message for every
+  `purpose` value, because the server never sees the field at all. That identical message is
+  the tell: it means "absent", not "wrong". **Don't chase the enum value; check the encoding.**
+
+- **`batch_size: "max"` is resolved by the client, not the server.** The SDK looks up
+  `GET /v1/fine-tunes/models/limits?model_name=…` and substitutes a number. Some models publish
+  `min == max`, so there is exactly one legal value. That endpoint is **free** and is also the
+  honest way to learn whether a base is fine-tunable at all — a model that is not answers with
+  a `message` instead of limits. **Don't discover an unsupported base by submitting.**
+
+- **`lora_trainable_modules: "all-linear"` is rejected by models that publish a specific list.**
+  `Qwen/Qwen3.6-35B-A3B` accepts only `k_proj,o_proj,q_proj,v_proj`. Read `target_modules` from
+  the limits call and send those. **Don't hard-code "all-linear".**
+
+- **A `-Lora`/`-FP8` suffixed name is not a fine-tune base.** The limits endpoint refuses both
+  `Qwen/Qwen3.6-35B-A3B-Lora` and `-FP8` as "not available for fine-tuning", while the
+  unsuffixed `Qwen/Qwen3.6-35B-A3B` is accepted. The suffixed names are serving endpoints.
+
 - **A Router backend row is configuration, not liveness.** `GET /v1/backends` returns
   `enabled: true` for a vast recipe whose box is **cold and unreachable** — enabled means
   "enabled in config", not "answering now". Our first `compute` output printed `enabled`, which

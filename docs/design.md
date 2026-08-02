@@ -112,6 +112,20 @@ Upstreams add states; a parser that guesses turns an unknown into a confident li
 `Cancelling` was added at S3 (contract amended): Together has a real `cancel_requested` state,
 and collapsing it into `Running` would tell an operator their cancel had not registered.
 
+### Submitting: the API applies no defaults
+
+The request body must carry Together's **full** parameter set — every field the SDK defaults
+client-side. Omission is read as zero, not as "use the default". `submit` first calls the free
+`GET /v1/fine-tunes/models/limits?model_name=…` and resolves against it:
+
+- `batch_size` — `"max"` is a *client-side* token; the API wants a number, and some models
+  publish `min == max` (exactly one legal value)
+- `lora_r` — clamped to `max_rank`
+- `lora_trainable_modules` — the model's own `target_modules`, not `"all-linear"`
+
+That call is also the honest base check: a model that is not fine-tunable answers with a
+`message` instead of limits, for free, before anything is submitted.
+
 ### Together status mapping
 
 Taken from Together's own SDK (`FinetuneJobStatus`), not from prose docs:
