@@ -50,6 +50,7 @@ pub mod engine;
 pub mod error;
 pub mod estimate;
 pub mod example;
+pub mod export;
 pub mod job;
 pub mod memory;
 pub mod paths;

@@ -12,6 +12,25 @@
 > explicit don't. Cross-project version drift lives in
 > `~/Projects/Launchpad-RS/docs/sharp-edges.md` instead.
 
+- **The stored dataset and the uploaded file are different artifacts.** Together's validator
+  rejects unknown columns outright (`InvalidFileFormatError: Found extra column`), and our
+  JSONL carries `provenance` and `instruction_kind` beside `messages` because lineage is the
+  product (D12). Uploading a stored dataset verbatim would be refused. `export::to_provider_jsonl`
+  projects down to `{"messages": [...]}`; the stored file is never mutated, so its hash — the
+  lineage identity — survives. **Don't "simplify" by uploading the stored bytes, and don't
+  strip provenance from the stored file to make them match.**
+
+- **Do not follow redirects on the Together client.** The upload flow returns the presigned
+  URL in a `Location` header and the file id in `X-Together-File-Id`. A client that follows
+  redirects automatically consumes both, PUTs an empty body to storage, and reports success —
+  an upload that silently uploaded nothing. `Policy::none()` is set at construction.
+  **Don't remove it, and don't add a second client that defaults to following.**
+
+- **The presigned PUT must not carry the bearer token.** The signature in the URL *is* the
+  authorisation, and the target is third-party storage — attaching our API key would hand it
+  to a host that has no business seeing it. **Don't add `.bearer_auth()` to the upload PUT
+  "for consistency" with the other calls.**
+
 - **An unrecognised upstream status is `Unknown`, never `Running`.** Together's status
   vocabulary has ten values today and will have more tomorrow. A parser that falls through to
   a plausible default turns a state it has never seen into a confident claim — and this

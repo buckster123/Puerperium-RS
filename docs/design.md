@@ -284,6 +284,40 @@ stays legible after the fact, and no rewrite can lose the fact that a job was ev
 
 ---
 
+## Export contract (what actually gets uploaded)
+
+The stored dataset and the uploaded file are **different artifacts**, deliberately.
+
+Together's validator rejects unknown columns. Our stored JSONL carries `provenance` and
+`instruction_kind` beside `messages` (D12), so it would be refused verbatim.
+`export::to_provider_jsonl` projects each line down to the accepted shape:
+
+```
+stored    {"messages":[…],"provenance":{…},"instruction_kind":"templated_heading"}
+uploaded  {"messages":[{"role":"user","content":…},{"role":"assistant","content":…}]}
+```
+
+The stored file is never mutated, so its `sha256` — the lineage identity — is unaffected, and
+the projection is reproducible from it at any time. **Lineage references the stored hash, not
+the uploaded bytes.**
+
+Validation mirrors the upstream's own rules (roles, non-empty content, at least one assistant
+turn) so a bad dataset fails **locally with a line number**, rather than costing a round trip
+to be told "Found extra column" with no idea where.
+
+### Upload flow (Together)
+
+Three steps, from the SDK's upload manager:
+
+1. `POST /files` with `purpose`/`file_name`/`file_type` → a redirect carrying the presigned URL
+   in `Location` and the id in `X-Together-File-Id`.
+2. `PUT` the bytes to the presigned URL — **unauthenticated**; the signature is the
+   authorisation and the target is third-party storage.
+3. `POST /files/{id}/preprocess` to finalise.
+
+Redirects are **not followed** (`Policy::none()`): following step 1 automatically consumes both
+headers and PUTs an empty body, an upload that silently uploads nothing.
+
 ## Compute contract (with ApexRouter)
 
 Charter D2/D4. Puerperium **discovers** compute; it never creates it.

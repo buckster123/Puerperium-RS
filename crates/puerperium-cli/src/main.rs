@@ -71,6 +71,13 @@ enum DataCmd {
     },
     /// Re-hash a dataset and compare against its sidecar.
     Verify { name: String },
+    /// Project a dataset into what a provider accepts, and validate it. Offline.
+    Export {
+        name: String,
+        /// Where to write. Omit to check only and report.
+        #[arg(long)]
+        to: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -104,6 +111,8 @@ enum JobCmd {
     Status { id: String },
     /// Ask the upstream to stop. Best effort; nothing is marked cancelled locally.
     Cancel { id: String },
+    /// Upload a dataset and print the training file id `submit` needs. Costs nothing.
+    Upload { dataset: String },
 }
 
 #[derive(Args)]
@@ -221,6 +230,7 @@ fn main() -> Result<()> {
         Command::Data(DataCmd::List) => data_list(&paths),
         Command::Data(DataCmd::Inspect { name, head }) => data_inspect(&paths, &name, head),
         Command::Data(DataCmd::Verify { name }) => data_verify(&paths, &name),
+        Command::Data(DataCmd::Export { name, to }) => data_export(&paths, &name, to.as_deref()),
         Command::Model(ModelCmd::Add(args)) => model_add(&paths, args),
         Command::Model(ModelCmd::List) => model_list(&paths),
         Command::Model(ModelCmd::Show { name }) => {
@@ -234,6 +244,7 @@ fn main() -> Result<()> {
         Command::Job(JobCmd::List) => job_list(&paths),
         Command::Job(JobCmd::Status { id }) => job_status(&paths, &id),
         Command::Job(JobCmd::Cancel { id }) => job_cancel(&paths, &id),
+        Command::Job(JobCmd::Upload { dataset }) => job_upload(&paths, &dataset),
         Command::Estimate(args) => estimate_cost(&paths, args),
         Command::Keys => keys(&loaded),
         Command::Lineage { model, json } => lineage(&paths, &model, json),
@@ -631,5 +642,50 @@ fn keys(loaded: &puerperium::secrets::Loaded) -> Result<()> {
             _ => println!("{name:<10} not configured  (set {var})"),
         }
     }
+    Ok(())
+}
+
+/// Read a stored dataset and project it to the provider's schema.
+fn provider_bytes(paths: &Paths, name: &str) -> Result<String> {
+    let path = dataset::jsonl_path(&paths.datasets(), name);
+    let stored =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    Ok(puerperium::export::to_provider_jsonl(
+        &stored,
+        puerperium::export::ProviderFormat::Conversation,
+    )?)
+}
+
+fn data_export(paths: &Paths, name: &str, to: Option<&std::path::Path>) -> Result<()> {
+    let out = provider_bytes(paths, name)?;
+    println!(
+        "{} lines, {} bytes, provider-schema clean",
+        out.lines().count(),
+        out.len()
+    );
+    match to {
+        Some(p) => {
+            std::fs::write(p, &out).with_context(|| format!("writing {}", p.display()))?;
+            println!("wrote {}", p.display());
+        }
+        None => println!("(validated only — pass --to <path> to write)"),
+    }
+    Ok(())
+}
+
+fn job_upload(paths: &Paths, dataset: &str) -> Result<()> {
+    // Project and validate BEFORE contacting anything: a schema error should cost nothing.
+    let body = provider_bytes(paths, dataset)?;
+    println!(
+        "{} lines, {} bytes — validated locally",
+        body.lines().count(),
+        body.len()
+    );
+
+    let client = together()?;
+    let file_id = client.upload_jsonl(&format!("{dataset}.jsonl"), body.as_bytes())?;
+    println!("training_file_id: {file_id}");
+    println!("\nnext: puerperium job submit --id <id> --dataset {dataset} \\");
+    println!("        --output-name <name> --training-file-id {file_id}");
     Ok(())
 }

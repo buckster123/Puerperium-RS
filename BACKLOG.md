@@ -84,9 +84,10 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
       `keys` verb that reports configuration without printing values. A real environment
       variable always wins, so a one-off override still works.
 
-- **Dataset upload to Together** — `job submit` currently takes `--training-file-id` for
-  data uploaded by other means. The upload call (`POST /v1/files`) is the missing link between
-  the dataset garden and a real submission; it wants the same pure-builder + thin-shell shape.
+- [x] **Dataset upload to Together** — `data export` (offline projection + validation) and
+      `job upload` (the three-step presigned flow). The loop is closed: dataset → export →
+      upload → submit → poll → adapter. Found in the process: Together rejects extra columns,
+      so the stored and uploaded files are deliberately different artifacts.
 - **First live submission** — gated on a `TOGETHER_API_KEY` and André's explicit go (D4/D8).
   This is also where the charter's open question gets answered: whether Together accepts
   `Qwen/Qwen3.6-27B` as a fine-tune base. Run `job submit --dry-run` first; it prints the exact
