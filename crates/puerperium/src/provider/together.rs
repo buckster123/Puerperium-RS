@@ -237,6 +237,75 @@ fn failure_reason(raw: &str) -> Option<String> {
 
 // -------------------------------------------------------- pricing
 
+/// What Together's own estimator says. Free, and **authoritative** — unlike a local
+/// heuristic it knows the tokenizer and, decisively, the **minimum charge**.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PriceEstimate {
+    pub total_usd: f64,
+    pub train_tokens: u64,
+    pub allowed_to_proceed: bool,
+}
+
+/// Build the `POST /v1/fine-tunes/estimate-price` body. Pure.
+pub fn build_estimate_body(
+    training_file_id: &str,
+    base_model: &str,
+    n_epochs: u32,
+    lora_r: u32,
+    lora_alpha: u32,
+    target_modules: &[String],
+) -> serde_json::Value {
+    let modules = if target_modules.is_empty() {
+        "all-linear".to_string()
+    } else {
+        target_modules.join(",")
+    };
+    serde_json::json!({
+        "training_file": training_file_id,
+        "model": base_model,
+        "n_epochs": n_epochs,
+        "n_evals": 0,
+        "training_type": {
+            "type": "Lora",
+            "lora_r": lora_r,
+            "lora_alpha": lora_alpha,
+            "lora_dropout": 0.0,
+            "lora_trainable_modules": modules,
+        },
+        "training_method": { "method": "sft" },
+    })
+}
+
+pub fn parse_price_estimate(body: &str) -> Result<PriceEstimate, ProviderError> {
+    let v: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| ProviderError::Malformed(format!("estimate response: {e}")))?;
+    if let Some(msg) = v.get("message").and_then(|m| m.as_str()) {
+        return Err(ProviderError::Rejected(msg.to_string()));
+    }
+    Ok(PriceEstimate {
+        total_usd: v
+            .get("estimated_total_price")
+            .and_then(serde_json::Value::as_f64)
+            .ok_or_else(|| ProviderError::Malformed("no estimated_total_price".into()))?,
+        train_tokens: v
+            .get("estimated_train_token_count")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0),
+        allowed_to_proceed: v
+            .get("allowed_to_proceed")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true),
+    })
+}
+
+/// `total_price` on a job record is in **nano-dollars**, not dollars.
+///
+/// A completed job reporting `4000000000` cost **$4.00**. Reading it as dollars would be off
+/// by a factor of a billion in the reassuring direction.
+pub fn nanodollars_to_usd(nano: u64) -> f64 {
+    nano as f64 / 1e9
+}
+
 /// Together LoRA fine-tuning, US dollars per million tokens, by parameter band.
 ///
 /// Verified 2026-08-02. Bands, not a formula — a model just over a boundary costs a step more.
@@ -389,6 +458,53 @@ mod tests {
         let got = parse_status_response(r#"{"status":"brand_new_state"}"#).expect("parse");
         assert_eq!(got.phase, Phase::Unknown);
         assert_eq!(got.upstream_status, "brand_new_state");
+    }
+
+    /// The correction that matters: a job reporting 4000000000 cost $4.00, not $4bn and not
+    /// 4 cents. Reading it as dollars is wrong by a billion in the reassuring direction.
+    #[test]
+    fn total_price_is_nanodollars() {
+        assert!((nanodollars_to_usd(4_000_000_000) - 4.0).abs() < 1e-9);
+        assert_eq!(nanodollars_to_usd(0), 0.0);
+    }
+
+    /// Real response from the live endpoint for the first shipped job.
+    #[test]
+    fn parses_the_authoritative_estimate() {
+        let body = r#"{"allowed_to_proceed":true,"credit_limit":0,
+            "estimated_eval_token_count":0,"estimated_total_price":4,
+            "estimated_train_token_count":50319,"estimation_available":true}"#;
+        let got = parse_price_estimate(body).expect("parse");
+        assert_eq!(got.total_usd, 4.0);
+        assert_eq!(got.train_tokens, 50319);
+        assert!(got.allowed_to_proceed);
+    }
+
+    /// 50319 tokens at $1.50/Mtok is $0.075 — the charge was $4.00. A MINIMUM dominates
+    /// small datasets, and no token-based local heuristic can see it.
+    #[test]
+    fn the_local_heuristic_cannot_see_the_minimum_charge() {
+        let metered = (50_319.0 / 1_000_000.0) * lora_price_per_mtok(35.0).expect("band");
+        assert!(metered < 0.10, "metered cost is trivial: {metered}");
+        assert!(4.0 / metered > 50.0, "the minimum dominates by >50x");
+    }
+
+    #[test]
+    fn estimate_body_uses_the_models_own_target_modules() {
+        let b = build_estimate_body(
+            "file-x",
+            "Qwen/Qwen3.6-35B-A3B",
+            3,
+            16,
+            32,
+            &["k_proj".into(), "v_proj".into()],
+        );
+        assert_eq!(
+            b["training_type"]["lora_trainable_modules"],
+            "k_proj,v_proj"
+        );
+        assert_eq!(b["training_method"]["method"], "sft");
+        assert_eq!(b["n_epochs"], 3);
     }
 
     #[test]
