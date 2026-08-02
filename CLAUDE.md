@@ -154,7 +154,18 @@ cargo build --release --workspace
 ./target/release/puerperium model list
 ./target/release/puerperium apprentice list
 ./target/release/puerperium lineage worker-v2          # --json for the full structure
+
+# Jobs (S3). Together is a hosted API — no compute to provision.
+./target/release/puerperium estimate --dataset my-set --params-b 27 --epochs 3
+./target/release/puerperium job submit --id j1 --dataset my-set --output-name worker-v2 \
+    --training-file-id file-abc --dry-run       # prints the body, contacts nothing
+./target/release/puerperium job list                   # polls non-terminal jobs
+./target/release/puerperium job status j1
 ```
+
+**Nothing has been submitted to Together for real yet.** The client is built from their SDK
+types and the parsers are tested against those shapes, but no request has been sent — it is
+INSTALLED, not ACTIVE. First live use needs a key and is André's explicit call (D4/D8).
 
 **Mining the live store for a real run:** copy the DB first, never query it in place —
 `cp ~/.cerebro-cortex/cerebro.db /tmp/copy.db`, then dump with
