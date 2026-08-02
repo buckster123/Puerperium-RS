@@ -19,6 +19,21 @@ pub enum Error {
     #[error("no record named {name:?} in {dir}")]
     RecordNotFound { dir: PathBuf, name: String },
 
+    #[error("compute {requested:?} is not available (Puerperium never creates it — have: {})",         if available.is_empty() { "nothing".to_string() } else { available.join(", ") })]
+    ComputeUnavailable {
+        requested: String,
+        available: Vec<String>,
+    },
+
+    #[error(
+        "job {id} was recorded but the upstream never confirmed it ({reason}) — \
+it may be running; check before resubmitting"
+    )]
+    SubmitUnconfirmed { id: String, reason: String },
+
+    #[error("provider refused: {0}")]
+    ProviderRefused(String),
+
     #[error("io error at {path}: {source}")]
     Io {
         path: PathBuf,

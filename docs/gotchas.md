@@ -12,6 +12,31 @@
 > explicit don't. Cross-project version drift lives in
 > `~/Projects/Launchpad-RS/docs/sharp-edges.md` instead.
 
+- **An unrecognised upstream status is `Unknown`, never `Running`.** Together's status
+  vocabulary has ten values today and will have more tomorrow. A parser that falls through to
+  a plausible default turns a state it has never seen into a confident claim — and this
+  particular mapping governs whether a *paid* job is treated as finished. `map_status` returns
+  `Phase::Unknown` for anything unlisted, `Unknown` is not terminal, and the raw string is kept
+  in `upstream_status` so the surprise is diagnosable. **Don't add a catch-all arm that guesses.**
+
+- **"We could not ask" is not "they said no".** An unreachable provider leaves the job
+  **non-terminal** — it may well be running and billing, and doctrine #9 says a paid run that
+  outlives our patience is still running. A *rejected* submit is terminal, with the upstream's
+  own words. Collapsing the two either orphans spend or invents a failure that never happened.
+  **Don't map a transport error onto a job outcome.**
+
+- **Check compute before building a provider.** The CLI evaluated `together()?` while
+  assembling the call, so a missing `TOGETHER_API_KEY` surfaced *instead of* "that box does not
+  exist" — the operator gets told to fix the wrong thing. `engine::check_compute` is public and
+  free precisely so a caller can gate first; `submit` calls the same function, so there is one
+  source of truth rather than a preview and a real check. **Don't reorder so that a credential
+  lookup precedes a D4 refusal.**
+
+- **`TogetherClient` implements `Debug` by hand, and must keep doing so.** A derived `Debug`
+  prints the API key verbatim the first time anything formats the client — a log line, a panic
+  message, an `{:?}` in a hurry. The manual impl reports length only, with a test asserting the
+  value never appears. **Don't `#[derive(Debug)]` on anything holding a secret.**
+
 - **A `ModelRecord` never stores liveness.** No `deployed`, no `live`, no `serving`, no
   `status`. Whether an alias actually answers is ApexRouter's truth — it depends on a process
   we do not supervise, on a box we did not rent (D2/D4), so anything we persist is a lie the

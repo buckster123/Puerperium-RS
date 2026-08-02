@@ -97,11 +97,37 @@ pub struct Terminal {
 }
 
 /// Computed on read, never stored.
-pub enum Phase { Submitted, Provisioning, Running, Succeeded, Failed, Cancelled, Unknown }
+pub enum Phase {
+    Submitted, Provisioning, Running,
+    Cancelling,                          // cancel asked for, upstream still working
+    Succeeded, Failed, Cancelled,
+    Unknown,
+}
 ```
 
-`Phase::Unknown` is a first-class, honest answer: the provider was unreachable, so we do not
-know. It is never silently rendered as `Running`.
+`Phase::Unknown` is a first-class, honest answer: the provider was unreachable **or returned a
+state we do not recognise**, so we do not know. It is never silently rendered as `Running`.
+Upstreams add states; a parser that guesses turns an unknown into a confident lie.
+
+`Cancelling` was added at S3 (contract amended): Together has a real `cancel_requested` state,
+and collapsing it into `Running` would tell an operator their cancel had not registered.
+
+### Together status mapping
+
+Taken from Together's own SDK (`FinetuneJobStatus`), not from prose docs:
+
+| Upstream | Phase | Terminal? |
+|---|---|---|
+| `pending`, `queued` | `Submitted` | no |
+| `running`, `compressing`, `uploading` | `Running` | no |
+| `cancel_requested` | `Cancelling` | no |
+| `completed` | `Succeeded` | **yes** |
+| `error`, `user_error` | `Failed` | **yes** |
+| `cancelled` | `Cancelled` | **yes** |
+| anything else | `Unknown` | no |
+
+`error` and `user_error` both map to `Failed`, but the **distinction is preserved in the
+reason** — "your dataset was rejected" and "our trainer fell over" call for different actions.
 
 ```rust
 pub struct ApprenticeRecord {
@@ -235,6 +261,26 @@ observed terminal ──► write Terminal ONCE (immutable)
 - `Terminal` is written once. A terminal job is never re-polled.
 - Every failure path carries the real reason. No job can sit non-terminal *because* nothing
   looked at it — `nursery_list_jobs` polls.
+
+### Storage: append-only
+
+`jobs.jsonl` is **append-only**; each mutation appends a full record snapshot and current state
+is a **fold by id, last write wins**. Datasets and registry records are single files, but jobs
+are the money-adjacent ones — this mirrors ApexRouter's `ledger.jsonl`, where "active" is a
+query rather than a stored flag. The progression (submitted → provider id assigned → terminal)
+stays legible after the fact, and no rewrite can lose the fact that a job was ever submitted.
+
+### The compute gate
+
+`ComputeRef` distinguishes what needs provisioning from what does not:
+
+- **`Managed`** — Together. A hosted API call; no box, so nothing to check. This is why the
+  Together path lands first (S3): it exercises the whole lifecycle without touching D4's
+  spend surface.
+- **`Node { name }`** — a Router-known backend or tunnel, for the vast/local paths. `submit`
+  **refuses before writing anything** when the named compute does not already exist, listing
+  what does and naming the `apexrouter` verb that would create more. Puerperium never creates
+  compute (D4).
 
 ---
 

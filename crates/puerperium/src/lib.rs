@@ -46,11 +46,15 @@
 
 pub mod convert;
 pub mod dataset;
+pub mod engine;
 pub mod error;
+pub mod estimate;
 pub mod example;
+pub mod job;
 pub mod memory;
 pub mod paths;
 pub mod provenance;
+pub mod provider;
 pub mod registry;
 pub mod store;
 

@@ -24,9 +24,14 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
       Lineage degrades honestly — missing dataset, hash mismatch, missing parent and
       hand-edited parent cycles are each reported, never fatal, never silently skipped.
       Shared `store.rs`/`paths.rs` extracted; `dataset.rs` refactored onto them.
-- [ ] **S3 — job lifecycle**: submit → poll → artifact. **Together path first** — an API call
-      with no provisioning exercises the whole lifecycle for the least risk. Fixture-driven,
-      hermetic (D5). Poll timeout leaves the job recoverable by provider id, never orphaned.
+- [x] **S3 — job lifecycle**: submit → poll → artifact, Together first. 100 tests, hermetic
+      (D5) — nothing opens a socket. Append-only `jobs.jsonl` folded last-write-wins, mirroring
+      ApexRouter's ledger: jobs are the money-adjacent records. Five invariants, each with the
+      failure it prevents: record before upstream call · unreachable ≠ failure · rejected *is*
+      failure, terminal, with their reason · terminal written once, never re-polled · compute
+      gated before anything is written. Status mapping taken from Together's own SDK enum;
+      unrecognised states are `Unknown`, never `Running`.
+      *Not verified live* — no key, so the HTTP client is INSTALLED, not ACTIVE.
 - [ ] **S4 — apprentice protocol**: `nursery_create_apprentice` — knowledge → dataset → train →
       lineage-complete record, from a real Cerebro query.
 - [ ] **S5 — deploy + lineage**: hand back the adapter; register with Router as a separate
@@ -72,6 +77,18 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
   as-steps is not the same thing and deserves its own design.
 - **Near-duplicate collapse** — Cerebro reinforces rather than re-mints at ≥0.86 cosine, but a
   dataset mined across months can still carry restatements of one lesson.
+
+**S3 follow-ups**
+
+- **Dataset upload to Together** — `job submit` currently takes `--training-file-id` for
+  data uploaded by other means. The upload call (`POST /v1/files`) is the missing link between
+  the dataset garden and a real submission; it wants the same pure-builder + thin-shell shape.
+- **First live submission** — gated on a `TOGETHER_API_KEY` and André's explicit go (D4/D8).
+  This is also where the charter's open question gets answered: whether Together accepts
+  `Qwen/Qwen3.6-27B` as a fine-tune base. Run `job submit --dry-run` first; it prints the exact
+  body without contacting anything.
+- **Router compute discovery** — `--available-compute` is passed by hand today. Reading
+  Router's control plane read-only (charter D2) replaces it, and lands naturally with S5.
 
 **Ideas, unscheduled**
 

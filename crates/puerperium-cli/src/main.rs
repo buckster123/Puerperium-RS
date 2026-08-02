@@ -12,6 +12,9 @@ use puerperium::convert::filter::FilterConfig;
 use puerperium::convert::instruct::InstructConfig;
 use puerperium::convert::{convert, ConvertConfig};
 use puerperium::dataset::{self, SourceSpec};
+use puerperium::engine::{self, SubmitSpec};
+use puerperium::estimate;
+use puerperium::job::{self, ComputeRef, Hyperparams, Method, Phase, Provider};
 use puerperium::memory::{MemoryRecord, MemoryType};
 use puerperium::paths::Paths;
 use puerperium::registry::{self, ModelRecord};
@@ -38,6 +41,11 @@ enum Command {
     /// Apprentices — specialists raised from an agent's own experience.
     #[command(subcommand)]
     Apprentice(ApprenticeCmd),
+    /// Training jobs — submit, poll, cancel.
+    #[command(subcommand)]
+    Job(JobCmd),
+    /// Estimate what a fine-tune would cost. Free; touches no upstream.
+    Estimate(EstimateArgs),
     /// Trace a model back through its ancestors to the memories it came from.
     Lineage {
         model: String,
@@ -82,6 +90,66 @@ enum ApprenticeCmd {
     List,
     /// Show one apprentice record as JSON.
     Show { id: String },
+}
+
+#[derive(Subcommand)]
+enum JobCmd {
+    /// Submit a training job.
+    Submit(SubmitArgs),
+    /// List jobs, newest first. Non-terminal jobs are polled.
+    List,
+    /// Show one job and its computed phase.
+    Status { id: String },
+    /// Ask the upstream to stop. Best effort; nothing is marked cancelled locally.
+    Cancel { id: String },
+}
+
+#[derive(Args)]
+struct SubmitArgs {
+    /// Job id. Yours to choose; it is how you find the job again.
+    #[arg(long)]
+    id: String,
+    /// Dataset name. Its hash is read from the sidecar and pinned into the record.
+    #[arg(long)]
+    dataset: String,
+    #[arg(long, default_value = "Qwen/Qwen3.6-27B")]
+    base_model: String,
+    /// Name for the resulting adapter.
+    #[arg(long)]
+    output_name: String,
+    /// Who ordered it. Never an `agent_id` (charter D6).
+    #[arg(long, default_value = "FORGE")]
+    trainer_agent: String,
+    /// The upstream's handle for the already-uploaded training data.
+    #[arg(long)]
+    training_file_id: String,
+    #[arg(long, default_value_t = 3)]
+    epochs: u32,
+    #[arg(long, default_value_t = 16)]
+    lora_r: u32,
+    #[arg(long, default_value_t = 32)]
+    lora_alpha: u32,
+    /// Router-known compute to run on. Omit for Together, which is a hosted API.
+    #[arg(long)]
+    compute: Option<String>,
+    /// Compute Router already has. Puerperium never creates any (charter D4).
+    #[arg(long, value_delimiter = ',')]
+    available_compute: Vec<String>,
+    /// Show the exact request body and write nothing. Touches no upstream.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+#[derive(Args)]
+struct EstimateArgs {
+    /// Dataset to price.
+    #[arg(long)]
+    dataset: String,
+    /// Base model size in billions of parameters (27 for Qwen3.6-27B).
+    #[arg(long, default_value_t = 27.0)]
+    params_b: f64,
+    #[arg(long, default_value_t = 3)]
+    epochs: u32,
 }
 
 #[derive(Args)]
@@ -153,6 +221,11 @@ fn main() -> Result<()> {
         Command::Apprentice(ApprenticeCmd::Show { id }) => {
             print_json(&registry::load_apprentice(&paths, &id)?)
         }
+        Command::Job(JobCmd::Submit(args)) => job_submit(&paths, args),
+        Command::Job(JobCmd::List) => job_list(&paths),
+        Command::Job(JobCmd::Status { id }) => job_status(&paths, &id),
+        Command::Job(JobCmd::Cancel { id }) => job_cancel(&paths, &id),
+        Command::Estimate(args) => estimate_cost(&paths, args),
         Command::Lineage { model, json } => lineage(&paths, &model, json),
     }
 }
@@ -369,6 +442,150 @@ fn lineage(paths: &Paths, model: &str, json: bool) -> Result<()> {
 
     if let Some(reason) = &lin.incomplete {
         println!("\nincomplete: {reason}");
+    }
+    Ok(())
+}
+
+// ------------------------------------------------------------------ jobs
+
+/// The live provider, or an honest refusal naming what is missing.
+fn together() -> Result<puerperium::provider::together_http::TogetherClient> {
+    Ok(puerperium::provider::together_http::TogetherClient::from_env()?)
+}
+
+fn job_submit(paths: &Paths, args: SubmitArgs) -> Result<()> {
+    let dataset = dataset::read_meta(&paths.datasets(), &args.dataset)
+        .with_context(|| format!("dataset {:?} must exist to be trained on", args.dataset))?
+        .dataset_ref();
+
+    let hyperparams = Hyperparams {
+        n_epochs: args.epochs,
+        lora_r: args.lora_r,
+        lora_alpha: args.lora_alpha,
+        ..Hyperparams::default()
+    };
+    let compute = match &args.compute {
+        Some(name) => ComputeRef::Node { name: name.clone() },
+        None => ComputeRef::Managed,
+    };
+
+    if args.dry_run {
+        let req = puerperium::provider::SubmitRequest {
+            training_file_id: args.training_file_id,
+            base_model: args.base_model,
+            output_name: args.output_name,
+            method: Method::LoraSft,
+            hyperparams,
+        };
+        println!("would POST /v1/fine-tunes:");
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&puerperium::provider::together::build_submit_body(&req))?
+        );
+        println!("\ndry run — nothing written, no upstream contacted");
+        return Ok(());
+    }
+
+    // Gate on compute BEFORE building a provider: a missing key must not mask the fact that
+    // the requested box does not exist (charter D4).
+    engine::check_compute(&compute, &args.available_compute)?;
+
+    let spec = SubmitSpec {
+        id: args.id,
+        provider: Provider::Together,
+        dataset,
+        base_model: args.base_model,
+        output_name: args.output_name,
+        method: Method::LoraSft,
+        hyperparams,
+        trainer_agent: args.trainer_agent,
+        compute,
+        training_file_id: args.training_file_id,
+    };
+
+    let record = engine::submit(paths, &together()?, spec, &args.available_compute)?;
+    print_json(&record)
+}
+
+fn job_list(paths: &Paths) -> Result<()> {
+    let all = job::load_all(paths.root())?;
+    if all.is_empty() {
+        println!("no jobs in {}", job::log_path(paths.root()).display());
+        return Ok(());
+    }
+
+    // Poll non-terminal jobs, but only build a client if one is actually needed — listing
+    // must not demand a key just to show finished work.
+    let live = all
+        .iter()
+        .any(|j| !j.is_terminal() && j.provider_job_id.is_some())
+        .then(together)
+        .transpose();
+
+    for j in &all {
+        let phase = match (j.terminal_phase(), &live) {
+            (Some(p), _) => p,
+            (None, Ok(Some(client))) => engine::refresh(paths, client, &j.id)
+                .map(|(_, p)| p)
+                .unwrap_or(Phase::Unknown),
+            // No key, or the client could not be built: unknown is the honest answer.
+            (None, _) => Phase::Unknown,
+        };
+        println!(
+            "{:<16} {:<10} {:<12} {:<22} {}",
+            j.id,
+            j.provider.as_str(),
+            phase.as_str(),
+            j.output_name,
+            j.dataset.name
+        );
+    }
+    if let Err(e) = &live {
+        println!("\n(non-terminal jobs shown as unknown: {e})");
+    }
+    Ok(())
+}
+
+fn job_status(paths: &Paths, id: &str) -> Result<()> {
+    let record = job::load(paths.root(), id)?;
+    let phase = match record.terminal_phase() {
+        Some(p) => p,
+        None => match together() {
+            Ok(client) => engine::refresh(paths, &client, id)?.1,
+            Err(e) => {
+                println!("(cannot poll: {e})");
+                Phase::Unknown
+            }
+        },
+    };
+    println!("phase: {}", phase.as_str());
+    print_json(&job::load(paths.root(), id)?)
+}
+
+fn job_cancel(paths: &Paths, id: &str) -> Result<()> {
+    let record = engine::cancel(paths, &together()?, id)?;
+    println!("cancel requested for {id}; nothing marked terminal until the upstream says so");
+    print_json(&record)
+}
+
+fn estimate_cost(paths: &Paths, args: EstimateArgs) -> Result<()> {
+    let path = dataset::jsonl_path(&paths.datasets(), &args.dataset);
+    let chars = std::fs::metadata(&path)
+        .with_context(|| format!("reading {}", path.display()))?
+        .len();
+
+    let est = estimate::together_lora(chars, args.epochs, args.params_b);
+    println!("dataset tokens  ~{}", est.dataset_tokens);
+    println!(
+        "training tokens ~{} ({} epochs)",
+        est.training_tokens, est.epochs
+    );
+    match (est.price_per_mtok_usd, est.training_usd) {
+        (Some(p), Some(usd)) => println!("training cost   ~${usd:.2} (at ${p:.2}/Mtok)"),
+        _ => println!("training cost   not priced"),
+    }
+    for c in &est.caveats {
+        println!("  - {c}");
     }
     Ok(())
 }
