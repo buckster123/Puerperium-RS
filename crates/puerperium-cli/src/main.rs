@@ -210,12 +210,14 @@ struct ApprenticeCreateArgs {
     /// Registry key for the apprentice.
     #[arg(long)]
     id: String,
-    /// Cerebro snapshot to mine. Opened READ-ONLY; prefer a `.backup` snapshot over a live file.
+    /// Cerebro snapshot to mine. Opened READ-ONLY; prefer a `.backup` snapshot over a live
+    /// file. Repeatable — a colony's knowledge lives on several nodes.
     #[arg(long)]
-    db: PathBuf,
-    /// Whose memory space to mine. Not the trainer (charter D6).
+    db: Vec<PathBuf>,
+    /// Whose memory space to mine, paired positionally with `--db`. A single value applies to
+    /// every snapshot.
     #[arg(long)]
-    master_agent: String,
+    master_agent: Vec<String>,
     /// What this apprentice is for, in your words. Recorded verbatim.
     #[arg(long)]
     specialization: String,
@@ -239,6 +241,10 @@ struct ApprenticeCreateArgs {
     /// Optional domain for the tag fallback, e.g. "ApexOS".
     #[arg(long)]
     domain: Option<String>,
+    /// Admit dream-engine memories. Off by default — they are the agent's own abstractions,
+    /// not lived experience, and training on them reinforces the abstraction.
+    #[arg(long)]
+    include_dream: bool,
     /// Mine and report what would be built, writing nothing.
     #[arg(long)]
     dry_run: bool,
@@ -796,17 +802,45 @@ fn agents(db: &std::path::Path) -> Result<()> {
 }
 
 fn apprentice_create(paths: &Paths, args: ApprenticeCreateArgs) -> Result<()> {
-    let query = puerperium::source::cerebro_db::Query {
-        agent_id: Some(args.master_agent.clone()),
-        any_tags: args.tags.clone(),
-        limit: args.limit,
-    };
-    let memories = puerperium::source::cerebro_db::read(&args.db, &query)?;
-    println!(
-        "mined {} memories from {}",
-        memories.len(),
-        args.db.display()
+    anyhow::ensure!(!args.db.is_empty(), "at least one --db is required");
+    anyhow::ensure!(
+        !args.master_agent.is_empty(),
+        "at least one --master-agent is required"
     );
+    anyhow::ensure!(
+        args.master_agent.len() == 1 || args.master_agent.len() == args.db.len(),
+        "give one --master-agent for all snapshots, or one per --db ({} given for {} snapshots)",
+        args.master_agent.len(),
+        args.db.len()
+    );
+
+    // Memory ids are only unique within a store; two nodes can reuse one. Prefixing by
+    // source keeps provenance honest and stops a collision silently dropping a memory.
+    let mut memories = Vec::new();
+    for (i, db) in args.db.iter().enumerate() {
+        let agent = args
+            .master_agent
+            .get(i)
+            .unwrap_or(&args.master_agent[0])
+            .clone();
+        let query = puerperium::source::cerebro_db::Query {
+            agent_id: Some(agent.clone()),
+            any_tags: args.tags.clone(),
+            limit: args.limit,
+        };
+        let mut got = puerperium::source::cerebro_db::read(db, &query)?;
+        println!(
+            "mined {:>5} memories  {agent:<14} {}",
+            got.len(),
+            db.display()
+        );
+        let stem = db.file_stem().and_then(|s| s.to_str()).unwrap_or("db");
+        for m in &mut got {
+            m.id = format!("{stem}:{}", m.id);
+        }
+        memories.append(&mut got);
+    }
+    println!("mined {} memories total", memories.len());
 
     let mut cfg = ConvertConfig::new();
     if !args.include_types.is_empty() {
@@ -816,6 +850,7 @@ fn apprentice_create(paths: &Paths, args: ApprenticeCreateArgs) -> Result<()> {
             .map(|s| parse_type(s))
             .collect::<Result<_>>()?;
     }
+    cfg.filter.include_dream_derived = args.include_dream;
     cfg.instruct = InstructConfig {
         domain: args.domain.clone(),
         ..InstructConfig::new()
@@ -841,7 +876,7 @@ fn apprentice_create(paths: &Paths, args: ApprenticeCreateArgs) -> Result<()> {
 
     let spec = puerperium::apprentice::Spec {
         id: args.id,
-        master_agent: args.master_agent,
+        master_agent: args.master_agent.join("+"),
         name: args.name,
         specialization: args.specialization,
         base_model: args.base_model,

@@ -31,6 +31,8 @@ pub enum Rejection {
     /// Survived the gate but could not be framed as a question — no heading trail, no tags.
     /// Recorded in the same ledger so a run's totals always add up.
     Unframeable,
+    /// Produced by Cerebro's dream engine rather than lived. Excluded by default.
+    DreamDerived,
 }
 
 impl Rejection {
@@ -43,6 +45,7 @@ impl Rejection {
             Rejection::LowSalience => "low_salience",
             Rejection::NotProse => "not_prose",
             Rejection::Unframeable => "unframeable",
+            Rejection::DreamDerived => "dream_derived",
         }
     }
 }
@@ -80,6 +83,8 @@ pub struct FilterConfig {
     pub min_salience: f32,
     pub include_types: Vec<MemoryType>,
     pub denied_tags: Vec<String>,
+    /// Admit memories the dream engine produced. **Off by default** — see [`is_dream_derived`].
+    pub include_dream_derived: bool,
 }
 
 impl Default for FilterConfig {
@@ -92,8 +97,30 @@ impl Default for FilterConfig {
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
+            include_dream_derived: false,
         }
     }
+}
+
+/// Was this memory produced by Cerebro's dream engine rather than lived?
+///
+/// Cerebro's consolidation phases mint memories tagged `dream_extracted`, `dream_distilled`,
+/// `dream_mutated`, `dream_merged`. They are the agent's own **abstractions of** experience,
+/// not the experience.
+///
+/// Measured on a real node: 1579 of 1629 procedural/schematic memories were dream-derived,
+/// averaging 227 characters against 4193 for the 50 lived ones — and reading them, they had
+/// abstracted the specifics away entirely ("establish a unified documentation hub as your
+/// investigation backbone"). Training a model on those is feeding it its own generic output,
+/// which reinforces the abstraction rather than the knowledge underneath it.
+///
+/// Excluded by default, admissible on request: an operator studying how an agent generalises
+/// has a real reason to want them.
+pub fn is_dream_derived(tags: &[String]) -> bool {
+    tags.iter().any(|t| {
+        let t = t.trim().to_lowercase();
+        t.starts_with("dream_") || t.starts_with("dream-") || t == "dream"
+    })
 }
 
 /// Tag prefixes that mark routing metadata rather than subject matter.
@@ -147,6 +174,10 @@ pub fn assess(mem: &MemoryRecord, cfg: &FilterConfig) -> Result<(), Rejection> {
         .any(|t| cfg.denied_tags.iter().any(|d| t == d) || is_routing_tag(t))
     {
         return Err(Rejection::DeniedTag);
+    }
+
+    if !cfg.include_dream_derived && is_dream_derived(&mem.tags) {
+        return Err(Rejection::DreamDerived);
     }
 
     if is_chatter(content) {
@@ -289,6 +320,62 @@ mod tests {
             ),
             Err(Rejection::NotProse)
         );
+    }
+
+    /// The real shape that made this necessary: a dream-extracted "procedure" that has
+    /// abstracted away everything specific.
+    #[test]
+    fn dream_derived_memories_are_excluded_by_default() {
+        let mut m = mem(
+            "When working with complex systems, establish a unified documentation hub as your \
+             investigation backbone, and use it to map problems to their resolutions.",
+            MemoryType::Procedural,
+        );
+        m.tags = vec![
+            "procedure".into(),
+            "dream_extracted".into(),
+            "debugging".into(),
+        ];
+        assert_eq!(
+            assess(&m, &FilterConfig::default()),
+            Err(Rejection::DreamDerived)
+        );
+
+        // Admissible on request — studying how an agent generalises is a real use.
+        let cfg = FilterConfig {
+            include_dream_derived: true,
+            ..FilterConfig::default()
+        };
+        assert_eq!(assess(&m, &cfg), Ok(()));
+    }
+
+    #[test]
+    fn dream_detection_covers_the_phase_tag_variants() {
+        for tag in [
+            "dream_extracted",
+            "dream_distilled",
+            "dream_mutated",
+            "dream_merged",
+            "DREAM_EXTRACTED",
+            "dream-journal",
+            "dream",
+        ] {
+            assert!(is_dream_derived(&[tag.to_string()]), "{tag} should count");
+        }
+        for tag in ["daydream", "dreamy-ui", "streaming"] {
+            assert!(!is_dream_derived(&[tag.to_string()]), "{tag} must not");
+        }
+    }
+
+    #[test]
+    fn lived_memories_with_ordinary_tags_are_untouched() {
+        let mut m = mem(
+            "Deploy procedure: stop the service, copy the binary, start it again. A running \
+             binary cannot be overwritten — text file busy means the stop was skipped.",
+            MemoryType::Procedural,
+        );
+        m.tags = vec!["procedure".into(), "deploy".into()];
+        assert_eq!(assess(&m, &FilterConfig::default()), Ok(()));
     }
 
     #[test]
