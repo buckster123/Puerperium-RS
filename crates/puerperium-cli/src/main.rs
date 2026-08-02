@@ -95,6 +95,19 @@ enum ModelCmd {
 
 #[derive(Subcommand)]
 enum ApprenticeCmd {
+    /// Raise a specialist from an agent's own remembered experience.
+    ///
+    /// Mines, builds a dataset, registers the record. Does NOT train — that costs money
+    /// and stays a separate explicit act (charter D4).
+    ///
+    /// Boxed: this variant is far larger than its siblings, and clap only ever holds one.
+    Create(Box<ApprenticeCreateArgs>),
+    /// Record the training job started for an apprentice.
+    AttachJob { id: String, job_id: String },
+    /// Record the model an apprentice grew into. This is what makes it trained.
+    AttachModel { id: String, model: String },
+    /// Show which agents a Cerebro snapshot holds memories for.
+    Agents { db: PathBuf },
     /// List apprentices, newest first.
     List,
     /// Show one apprentice record as JSON.
@@ -161,6 +174,45 @@ struct EstimateArgs {
     params_b: f64,
     #[arg(long, default_value_t = 3)]
     epochs: u32,
+}
+
+#[derive(Args)]
+struct ApprenticeCreateArgs {
+    /// Registry key for the apprentice.
+    #[arg(long)]
+    id: String,
+    /// Cerebro snapshot to mine. Opened READ-ONLY; prefer a `.backup` snapshot over a live file.
+    #[arg(long)]
+    db: PathBuf,
+    /// Whose memory space to mine. Not the trainer (charter D6).
+    #[arg(long)]
+    master_agent: String,
+    /// What this apprentice is for, in your words. Recorded verbatim.
+    #[arg(long)]
+    specialization: String,
+    /// Human name for the apprentice.
+    #[arg(long)]
+    name: String,
+    #[arg(long, default_value = "Qwen/Qwen3.6-27B")]
+    base_model: String,
+    /// Dataset name to create. Datasets are immutable; re-running under one is refused.
+    #[arg(long)]
+    dataset_name: String,
+    /// Keep only memories carrying at least one of these tags.
+    #[arg(long, value_delimiter = ',')]
+    tags: Vec<String>,
+    /// Cap memories mined, highest salience first.
+    #[arg(long)]
+    limit: Option<usize>,
+    /// Memory types to include. Defaults to procedural, semantic, schematic.
+    #[arg(long, value_delimiter = ',')]
+    include_types: Vec<String>,
+    /// Optional domain for the tag fallback, e.g. "ApexOS".
+    #[arg(long)]
+    domain: Option<String>,
+    /// Mine and report what would be built, writing nothing.
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Args)]
@@ -236,6 +288,14 @@ fn main() -> Result<()> {
         Command::Model(ModelCmd::Show { name }) => {
             print_json(&registry::load_model(&paths, &name)?)
         }
+        Command::Apprentice(ApprenticeCmd::Create(args)) => apprentice_create(&paths, *args),
+        Command::Apprentice(ApprenticeCmd::AttachJob { id, job_id }) => {
+            print_json(&puerperium::apprentice::attach_job(&paths, &id, &job_id)?)
+        }
+        Command::Apprentice(ApprenticeCmd::AttachModel { id, model }) => {
+            print_json(&puerperium::apprentice::attach_model(&paths, &id, &model)?)
+        }
+        Command::Apprentice(ApprenticeCmd::Agents { db }) => agents(&db),
         Command::Apprentice(ApprenticeCmd::List) => apprentice_list(&paths),
         Command::Apprentice(ApprenticeCmd::Show { id }) => {
             print_json(&registry::load_apprentice(&paths, &id)?)
@@ -687,5 +747,94 @@ fn job_upload(paths: &Paths, dataset: &str) -> Result<()> {
     println!("training_file_id: {file_id}");
     println!("\nnext: puerperium job submit --id <id> --dataset {dataset} \\");
     println!("        --output-name <name> --training-file-id {file_id}");
+    Ok(())
+}
+
+// ----------------------------------------------------------- apprentices
+
+fn agents(db: &std::path::Path) -> Result<()> {
+    let all = puerperium::source::cerebro_db::agents(db)?;
+    if all.is_empty() {
+        println!("no live memories in {}", db.display());
+        return Ok(());
+    }
+    for (agent, n) in all {
+        println!("{agent:<16} {n:>6} memories");
+    }
+    Ok(())
+}
+
+fn apprentice_create(paths: &Paths, args: ApprenticeCreateArgs) -> Result<()> {
+    let query = puerperium::source::cerebro_db::Query {
+        agent_id: Some(args.master_agent.clone()),
+        any_tags: args.tags.clone(),
+        limit: args.limit,
+    };
+    let memories = puerperium::source::cerebro_db::read(&args.db, &query)?;
+    println!(
+        "mined {} memories from {}",
+        memories.len(),
+        args.db.display()
+    );
+
+    let mut cfg = ConvertConfig::new();
+    if !args.include_types.is_empty() {
+        cfg.filter.include_types = args
+            .include_types
+            .iter()
+            .map(|s| parse_type(s))
+            .collect::<Result<_>>()?;
+    }
+    cfg.instruct = InstructConfig {
+        domain: args.domain.clone(),
+        ..InstructConfig::new()
+    };
+
+    if args.dry_run {
+        let out = puerperium::convert::convert(&memories, &cfg);
+        println!(
+            "would produce {} examples from {} memories",
+            out.examples.len(),
+            out.memories_used
+        );
+        println!("rejected {}", out.rejections.total());
+        for (reason, n) in out.rejections.counts() {
+            println!("  {reason:<16} {n}");
+        }
+        for (kind, n) in &out.framing {
+            println!("  framing {:<18} {n}", kind.as_str());
+        }
+        println!("\ndry run — nothing written");
+        return Ok(());
+    }
+
+    let spec = puerperium::apprentice::Spec {
+        id: args.id,
+        master_agent: args.master_agent,
+        name: args.name,
+        specialization: args.specialization,
+        base_model: args.base_model,
+        dataset_name: args.dataset_name,
+    };
+    let created = puerperium::apprentice::create(paths, spec, &memories, &cfg)?;
+
+    println!(
+        "examples {} from {} memories ({} rejected)",
+        created.converted.examples.len(),
+        created.converted.memories_used,
+        created.converted.rejections.total()
+    );
+    println!();
+    print_json(&created.apprentice)?;
+    println!("\nuntrained by design — training costs money and is a separate act:");
+    println!(
+        "  puerperium job upload {}",
+        created
+            .apprentice
+            .dataset
+            .as_ref()
+            .map(|d| d.name.as_str())
+            .unwrap_or("<dataset>")
+    );
     Ok(())
 }

@@ -16,6 +16,9 @@ pub enum Error {
     #[error("no examples survived the quality gate ({rejected} rejected) — nothing was written")]
     NoExamples { rejected: usize },
 
+    #[error("{what} {name:?} already exists")]
+    AlreadyExists { what: String, name: String },
+
     #[error("no record named {name:?} in {dir}")]
     RecordNotFound { dir: PathBuf, name: String },
 

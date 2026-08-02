@@ -32,8 +32,11 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
       gated before anything is written. Status mapping taken from Together's own SDK enum;
       unrecognised states are `Unknown`, never `Running`.
       *Not verified live* — no key, so the HTTP client is INSTALLED, not ACTIVE.
-- [ ] **S4 — apprentice protocol**: `nursery_create_apprentice` — knowledge → dataset → train →
-      lineage-complete record, from a real Cerebro query.
+- [x] **S4 — apprentice protocol**: `apprentice create` mines a Cerebro snapshot (read-only)
+      → dataset → lineage-complete record; `attach-job`/`attach-model` walk it to trained.
+      134 tests. Proven on the real store: 300 memories mined → 114 examples from 39, dataset
+      hashed and resolving, lineage tracing back to the memories. Stops before spending by
+      design — training stays a separate explicit act (D4).
 - [ ] **S5 — deploy + lineage**: hand back the adapter; register with Router as a separate
       explicit verb through its existing endpoints (D2). Cerebro carries the lineage event.
 - [ ] **S6 — field**: one real adapter, end to end. A specialist trained from FORGE's own
@@ -68,9 +71,11 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
   tokens, so charter D4 gates it; `InstructionKind::LlmAssisted` already exists for it.
 - **Synthetic generation from tool schemas** — the Python original's `SyntheticGenerator`.
   Needs a tool-schema source; worth doing when there is one to point at.
-- **Cerebro MCP source adapter** — S1 reads a JSON export. The live path (`export_memories` for
-  bulk, `recall`/`find_by_tags` for targeted) lands with S2's registry, mirroring
-  Prefrontal-RS's `core/cortex.rs` stdio-client pattern.
+- **Cerebro MCP source adapter** — S4 reads a snapshot file directly (read-only SQLite), which
+  is what the apex1 workflow actually needs. An MCP path (`export_memories` for bulk,
+  `recall`/`find_by_tags` for targeted) would let it mine a *remote* Cerebro without a file
+  copy; mirrors Prefrontal-RS's `core/cortex.rs` stdio-client pattern. Not needed until
+  something wants to mine over the wire.
 - **Episode → trajectory examples** — episodes carry ordered steps, which is the closest thing
   in the store to a real tool-use trajectory. Different converter, likely the highest-value
   data for a *worker* model. Excluded from S1 because episodic-as-prose is narrative; episodic-

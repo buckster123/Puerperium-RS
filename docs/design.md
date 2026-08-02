@@ -445,6 +445,23 @@ vanish silently.
 
 ---
 
+## Apprentice protocol (S4)
+
+`nursery_create_apprentice` **adds no capability**. It composes mine → convert → dataset →
+record, and its whole value is that the composition leaves a traceable record.
+
+**It stops before spending.** Creating an apprentice does *not* submit a training job. The
+apprentice exists in an honestly untrained state; `attach_job` and `attach_model` record what
+happens to it later, and `is_trained()` stays derived from `model.is_some()` (D3).
+
+Refusals, each because the alternative looks like progress and is not:
+
+| Situation | Why it is refused |
+|---|---|
+| Conversion yields no examples | an apprentice with no data behind it is worse than none |
+| Apprentice id already exists | silently rebuilding would orphan the first dataset |
+| `attach_model` names an unregistered model | a dangling reference breaks the lineage walk at the generation being asked about |
+
 ## Cerebro mining contract
 
 - Read via the Cerebro MCP surface: `recall` / `memory_search` / `find_by_tags` /

@@ -127,6 +127,10 @@ pub fn save_apprentice(paths: &Paths, record: &ApprenticeRecord) -> Result<()> {
     store::save(&paths.apprentices(), &record.id, record)
 }
 
+pub fn apprentice_exists(paths: &Paths, id: &str) -> bool {
+    store::exists(&paths.apprentices(), id)
+}
+
 pub fn load_apprentice(paths: &Paths, id: &str) -> Result<ApprenticeRecord> {
     store::load(&paths.apprentices(), id)
 }
