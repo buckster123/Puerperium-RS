@@ -177,6 +177,15 @@ v1 ships the Stage-1 loop. Each gate is checkable, not aspirational.
 
 ## Amendments
 
+- **2026-08-03** — **Together is a TRAINING provider only; serving happens on vast or local
+  compute.** Their dedicated endpoints are priced for the hardware they run on (B200 / dual
+  H100 class), which is absurd overkill for a small LoRA adapter. Parked until further notice.
+  *Consequence the pipeline has to answer:* a Together fine-tune currently leaves its artifact
+  as a **model name hosted on their side**, not as weights we hold. Serving on vast/local means
+  the adapter must be **downloaded** — `job download` is now the missing link between a
+  finished job and a servable model, and it is the top of the backlog. Until it exists, a
+  completed job produces something we can name in lineage but cannot yet run.
+
 - **2026-08-03** — **spend estimates come from the provider, not from us** (S6 finding). The
   first shipped job metered $0.076 of tokens and was billed **$4.00**: a minimum charge no
   token-based local heuristic can see, on top of a 3.6x token overestimate. `job quote` now
