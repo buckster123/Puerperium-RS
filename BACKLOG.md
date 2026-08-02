@@ -7,8 +7,15 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
 
 - [x] **S0 — bootstrap**: charter (D1–D12), CLAUDE.md, workspace, CI, drafts triaged
       (2026-08-02 — Grok's drafts superseded on two structural points; see charter amendments)
-- [ ] **S1 — dataset garden**: Cerebro query → instruction JSONL, synthetic templates,
-      provenance stamp + `sha256` per dataset (D12). Pure convert/chunk fns unit-tested.
+- [x] **S1 — dataset garden**: memories → instruction JSONL, provenance-stamped and hashed
+      (D12). Pure pipeline (filter → chunk → frame), 45 tests, `puerperium data
+      generate|list|inspect|verify`. **Proven on the real store** (2026-08-02): 347 memories →
+      182 examples from 100, accounting total, framing split 112 heading / 70 tag. Three
+      defects the real data found and the synthetic tests could not: A2A chatter passing the
+      gate, routing tags (`msg`, `from:`, `to:`) missing from the denylist, and statement
+      headings producing broken instructions. Each has a named regression test.
+      *Not yet done here:* LLM-assisted framing (deferred, D4) and synthetic tool-schema
+      templates — see parking below.
 - [ ] **S2 — registry**: datasets · models · apprentices · lineage. Facts only, phase computed
       on read (D3). CRUD round-trips under `tempfile`.
 - [ ] **S3 — job lifecycle**: submit → poll → artifact. **Together path first** — an API call
@@ -42,6 +49,23 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
 - **R4** — promote / rollback with a **verified-restorable** `previous_good` (D11)
 - **R5** — UI triggers, optional colony vote
 - **R6** — continuous / scheduled rebirth policies
+
+**Dataset garden follow-ups** (S1 shipped without these, deliberately)
+
+- **LLM-assisted instruction framing** — the template floor is honest but plain, and 70 of 182
+  examples framed from tags alone. A model writing the questions would lift those most. Costs
+  tokens, so charter D4 gates it; `InstructionKind::LlmAssisted` already exists for it.
+- **Synthetic generation from tool schemas** — the Python original's `SyntheticGenerator`.
+  Needs a tool-schema source; worth doing when there is one to point at.
+- **Cerebro MCP source adapter** — S1 reads a JSON export. The live path (`export_memories` for
+  bulk, `recall`/`find_by_tags` for targeted) lands with S2's registry, mirroring
+  Prefrontal-RS's `core/cortex.rs` stdio-client pattern.
+- **Episode → trajectory examples** — episodes carry ordered steps, which is the closest thing
+  in the store to a real tool-use trajectory. Different converter, likely the highest-value
+  data for a *worker* model. Excluded from S1 because episodic-as-prose is narrative; episodic-
+  as-steps is not the same thing and deserves its own design.
+- **Near-duplicate collapse** — Cerebro reinforces rather than re-mints at ≥0.86 cosine, but a
+  dataset mined across months can still carry restatements of one lesson.
 
 **Ideas, unscheduled**
 

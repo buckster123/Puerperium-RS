@@ -171,6 +171,115 @@ first (S3).
 
 ---
 
+## Conversion contract (S1)
+
+How a memory becomes training data. **Every rule here was set against the real store**
+(349 memories, `~/.cerebro-cortex/cerebro.db`, read-only copy, 2026-08-02) — not from a guess
+about what memories look like.
+
+### What the store actually contains
+
+| Type | n | avg chars | `##` sections | Verdict |
+|---|---|---|---|---|
+| episodic | 194 | 1443 | 0 | **off by default** — session narrative |
+| semantic | 78 | 511 | 3 | on — facts and decisions |
+| procedural | 59 | 1009 | 22 | **on — the best material** |
+| prospective | 12 | 870 | 0 | off — intentions, not knowledge |
+| affective | 3 | 539 | 0 | off |
+| schematic | 3 | 478 | 0 | on — derived architecture insight |
+
+**Episodic is excluded by default and this is deliberate.** It is the largest class, and it is
+session history. Training on it teaches a model to recite what happened rather than to do the
+work. `include_types` can override; the default may not.
+
+### The quality gate (`filter.rs`)
+
+The store holds **messages and chatter as well as knowledge** — A2A pings, smoke tests,
+greetings. A live example, verbatim: *"Yo HERMES-KRKN! 👋 ... Just doing a first smoke test on
+the A2A messaging system. Can you hear me?"* That is a real semantic memory and it must never
+become an instruction pair.
+
+A candidate is rejected if any holds. Every rejection is **counted by reason** and reported —
+a filter that silently eats data is worse than no filter.
+
+1. `content.len() < MIN_CONTENT` (default 120) — too short to teach anything.
+2. Conversational-artifact markers: greeting openers on the first line, and direct-address
+   phrases ("can you hear me", "testing 123", "first smoke test"). Deliberately **not**
+   decisive on its own: the bare phrase "smoke test", which appears in perfectly good
+   procedures ("run the smoke test before deploying").
+3. Tag denylist: `a2a`, `msg`, `message`, `test`, `smoke`, `chatter`, `ping`, plus any
+   **routing-prefixed** tag (`from:`, `to:`). A2A messages in the real store carry
+   `msg`/`from:CLAUDE`/`to:HERMES-KRKN` — a bare `message` entry missed all of them.
+4. `salience < MIN_SALIENCE` (default 0.3) — Cerebro already decided it was marginal.
+5. Content that is mostly a single URL, or mostly non-prose punctuation.
+
+The filter is **pure and unit-tested against real captured content**, including the greeting
+above as a named regression case.
+
+### Chunking (`chunk.rs`)
+
+- **Markdown-sectioned content** (`##`/`###`, 22 of 59 procedural memories): one chunk per
+  section, carrying its heading path (`Doc Title › ## Section › ### Subsection`). Sections
+  under `MIN_CONTENT` merge forward into the next.
+- **Unsectioned content**: one chunk, whole. No paragraph splitting — a lesson split mid-thought
+  produces two half-lessons, which is worse than one long one.
+- Chunks over `MAX_CHUNK` (default 6000 chars) split at paragraph boundaries, never mid-line.
+
+### Instruction synthesis (`instruct.rs`) — templates only in S1
+
+Deterministic, free, no LLM. The instruction is derived from what the memory already carries:
+
+| Heading shape | Instruction form |
+|---|---|
+| Short noun phrase (≤4 words, ≤40 chars) under a doc title | *"Explain Essential Flags, in the context of VLLM SERVING REFERENCE."* |
+| **Statement** heading (longer, or containing `, `) | *"In PROCEDURE — Deploying vLLM to vast.ai, explain: Vast SSH-mode OVERRIDES Docker ENTRYPOINT"* |
+| Title only, noun phrase | *"Explain Deploy procedure."* |
+| Title only, statement | *"Explain: When integrating NPU with CC, use the zero-code approach"* |
+| No heading trail | topical tags: *"What do you know about mesh and federation in ApexOS?"* |
+| No heading trail, no topical tags | **`Unframeable`** — counted, never invented |
+
+The statement/phrase split exists because real memories use whole claims as section headings.
+Inlining one gives *"Explain Vast SSH-mode OVERRIDES Docker ENTRYPOINT, in the context of…"*,
+which is gibberish. The detection is deliberately **conservative**: the clause form reads fine
+for a noun phrase too, so a false positive costs verbosity while a false negative costs a
+broken sentence.
+
+**Tags used for framing must be topical.** Routing metadata (`from:`, `to:`), bare years
+(`2024`, `2024-2026`) and record bookkeeping (`session-notes`, `completion-summary`, `status`,
+`wip`…) are excluded — framing from those produced *"What do you know about phase-6,
+completion-summary, and session-notes?"*, which is grammatical and empty.
+
+The response is the chunk body, verbatim. **Puerperium never rewrites the knowledge** — it
+frames it.
+
+**Every example records which strategy framed it** (`templated_heading` vs `templated_tag`),
+and the sidecar reports the split. On the real store the ratio is 112 : 70 — the tag-framed
+third is materially weaker, and that fact is data the consumer can act on rather than a
+footnote. `llm_assisted` joins the same enum when that pass lands.
+
+**LLM-assisted question generation is deliberately deferred** (post-v1): it costs tokens, so it
+is gated by D4, and template mode has to be the honest floor anyway — a dataset must be
+buildable on a node with no key and no budget.
+
+### Output
+
+JSONL, one `Example` per line, sharegpt-style `messages`. Alongside it a `<name>.meta.json`:
+`sha256` of the JSONL bytes, example count, memories used, source spec, **per-reason rejection
+counts**, the **framing split**, and the tool version. The hash is the dataset's real identity
+(D12) — `DatasetRef` carries it everywhere.
+
+Datasets are **immutable**: rebuilding under an existing name is an error, not an overwrite,
+because a job record pointing at a silently-changed dataset is a lineage lie.
+
+**Every new sidecar field must be `#[serde(default)]`.** Datasets are durable and referenced by
+hash for the life of the registry; adding `framing` without a default broke `data list` on every
+previously-written dataset, and that regression now has a test.
+
+Accounting is **total**: `memories_used + rejected == memories_in`, always. A memory can never
+vanish silently.
+
+---
+
 ## Cerebro mining contract
 
 - Read via the Cerebro MCP surface: `recall` / `memory_search` / `find_by_tags` /
