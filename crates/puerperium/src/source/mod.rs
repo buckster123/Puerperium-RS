@@ -8,3 +8,4 @@
 //! usually a live daily driver.
 
 pub mod cerebro_db;
+pub mod cerebro_mcp;

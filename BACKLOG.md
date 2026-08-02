@@ -37,8 +37,12 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
       134 tests. Proven on the real store: 300 memories mined → 114 examples from 39, dataset
       hashed and resolving, lineage tracing back to the memories. Stops before spending by
       design — training stays a separate explicit act (D4).
-- [ ] **S5 — deploy + lineage**: hand back the adapter; register with Router as a separate
-      explicit verb through its existing endpoints (D2). Cerebro carries the lineage event.
+- [x] **S5 — deploy + lineage**: `compute` (read-only discovery) and `deploy` (register the
+      adapter as a Router backend + alias, then write a Cerebro lineage event). 152 tests.
+      Verified against the **live** Router: discovery reads real backends, dry-run prints the
+      exact NodeSpec/ModelRoute. Reuses an existing backend rather than duplicating; credential
+      is sent as a *pointer* (`{kind:env, var:…}`), never key material. Resolved a charter open
+      question along the way — see the 2026-08-03 amendment.
 - [ ] **S6 — field**: one real adapter, end to end. A specialist trained from FORGE's own
       memory beats its base on a real task — **measured, not asserted**. This is the point of
       the whole thing; nothing above counts until this row is ticked.
@@ -97,8 +101,10 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
   This is also where the charter's open question gets answered: whether Together accepts
   `Qwen/Qwen3.6-27B` as a fine-tune base. Run `job submit --dry-run` first; it prints the exact
   body without contacting anything.
-- **Router compute discovery** — `--available-compute` is passed by hand today. Reading
-  Router's control plane read-only (charter D2) replaces it, and lands naturally with S5.
+- [x] **Router compute discovery** — `puerperium compute` reads Router's backends read-only.
+      Still to wire: `job submit --available-compute` should default to a **probed** listing —
+      a backend row is configuration, not liveness (a vast recipe reads `enabled` while cold),
+      so `/v1/backends/{id}/probe` has to gate it or the D4 check would pass on a dead box.
 
 **Ideas, unscheduled**
 

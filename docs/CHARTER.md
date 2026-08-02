@@ -150,10 +150,15 @@ v1 ships the Stage-1 loop. Each gate is checkable, not aspirational.
 
 ## Open questions
 
-- **Does Together actually accept `Qwen/Qwen3.6-27B` as a fine-tune base?** Pricing puts it in
-  the $1.50/1M 17–69B LoRA band, but the supported-base list moves. Verify at contract time
-  (S3), and design `nursery_estimate_cost` to report an honest "base not supported" rather than
-  a guess.
+- ~~**Does Together accept `Qwen/Qwen3.6-27B` as a fine-tune base?**~~ **Answered 2026-08-03:
+  no — Together does not carry that model at all.** Read from their live catalogue (270 models,
+  via ApexRouter's `together` backend): the Qwen3.6 entries are `Qwen3.6-Plus`,
+  `Qwen3.6-35B-A3B-FP8` and `Qwen3.6-35B-A3B-Lora`. **The Together LoRA base is
+  `Qwen/Qwen3.6-35B-A3B`** — the MoE, which `GARDEN.md` calls the throughput-first alternate.
+  The dense 27B remains right for the *local/vast* path (the garden node serves
+  `Qwen3.6-27B-Q6_K.gguf` today), so **the base differs by provider** and neither default is
+  wrong everywhere. `puerperium compute` now lists the LoRA-capable bases each backend
+  advertises, so the choice is checkable for free before anything is submitted.
 - **Hosting is a second, ongoing charge.** A Together-tuned model bills for its dedicated
   endpoint separately from training. Should `nursery_estimate_cost` quote training-only, or
   training + N days of hosting? Leaning: both, explicitly labelled — a single number here would
@@ -168,6 +173,12 @@ v1 ships the Stage-1 loop. Each gate is checkable, not aspirational.
 ---
 
 ## Amendments
+
+- **2026-08-03** — **the fine-tune base differs by provider** (S5 finding, resolves an open
+  question). Together carries no dense `Qwen3.6-27B`; its LoRA-capable Qwen3.6 base is
+  `Qwen/Qwen3.6-35B-A3B`. The local/vast path keeps the dense 27B. No decision reversed —
+  D1–D12 stand — but any doc or default that read "the base model" as a single global value
+  was wrong, and `compute` now surfaces the per-backend truth.
 
 - **2026-08-02** — charter adopted. Supersedes `drafts/` (Grok, 2026-08-02) on two structural
   points: the nursery is a **standalone sibling**, not a crate inside ApexOS-RS (D1); and the
