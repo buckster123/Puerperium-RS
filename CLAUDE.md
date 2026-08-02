@@ -159,9 +159,17 @@ cargo build --release --workspace
 ./target/release/puerperium estimate --dataset my-set --params-b 27 --epochs 3
 ./target/release/puerperium job submit --id j1 --dataset my-set --output-name worker-v2 \
     --training-file-id file-abc --dry-run       # prints the body, contacts nothing
+./target/release/puerperium data export my-set --to /tmp/upload.jsonl   # offline, validates
+./target/release/puerperium job upload my-set          # -> training_file_id
 ./target/release/puerperium job list                   # polls non-terminal jobs
 ./target/release/puerperium job status j1
 ```
+
+**Credentials.** `TOGETHER_API_KEY` is read from the process environment. A real environment
+variable always wins; failing that, the first of `$PUERPERIUM_ENV_FILE`,
+`~/.config/puerperium/env`, `/etc/puerperium/env` is loaded (`KEY=VALUE`, no `export`, `0600` —
+the house format). `puerperium keys` reports what is configured **without ever printing a
+value**. On this box the key already comes from `~/.bashrc`, so no file is needed.
 
 **Nothing has been submitted to Together for real yet.** The client is built from their SDK
 types and the parsers are tested against those shapes, but no request has been sent — it is

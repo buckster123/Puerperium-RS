@@ -59,8 +59,13 @@ impl TogetherClient {
         let base_url =
             std::env::var("TOGETHER_BASE_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
 
+        // Redirects are NOT followed. The upload flow hands back a presigned URL in the
+        // `Location` header of a redirect response, and the file id in `X-Together-File-Id`.
+        // A client that follows the redirect automatically consumes both and PUTs an empty
+        // body to storage — the upload silently succeeds at nothing.
         let http = reqwest::blocking::Client::builder()
             .timeout(TIMEOUT)
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| ProviderError::Unreachable(format!("could not build http client: {e}")))?;
 
@@ -99,6 +104,87 @@ fn read(resp: reqwest::Result<reqwest::blocking::Response>) -> Result<String, Pr
             "HTTP {status}: {}",
             body.trim()
         )))
+    }
+}
+
+/// Header carrying the new file's id on the upload-URL response.
+const FILE_ID_HEADER: &str = "X-Together-File-Id";
+
+impl TogetherClient {
+    /// Upload provider-ready JSONL, returning the file id `submit` needs.
+    ///
+    /// Three steps, per the SDK's own upload manager:
+    ///
+    /// 1. `POST /files` with `purpose`/`file_name`/`file_type` → a redirect whose `Location`
+    ///    is a presigned URL and whose `X-Together-File-Id` is the id.
+    /// 2. `PUT` the raw bytes to that presigned URL. **No auth header** — the signature *is*
+    ///    the authorisation, and sending a bearer token to third-party storage would leak it.
+    /// 3. `POST /files/{id}/preprocess` to finalise.
+    ///
+    /// `bytes` must already be projected to the provider's schema — see
+    /// [`crate::export::to_provider_jsonl`]. Uploading a stored dataset verbatim is refused
+    /// upstream with "Found extra column".
+    pub fn upload_jsonl(&self, file_name: &str, bytes: &[u8]) -> Result<String, ProviderError> {
+        // Step 1
+        let resp = self
+            .http
+            .post(self.url("files"))
+            .bearer_auth(&self.api_key)
+            .query(&[
+                ("purpose", "fine-tune"),
+                ("file_name", file_name),
+                ("file_type", "jsonl"),
+            ])
+            .send()
+            .map_err(|e| ProviderError::Unreachable(e.to_string()))?;
+
+        let status = resp.status();
+        if !(status.is_success() || status.is_redirection()) {
+            let body = resp.text().unwrap_or_default();
+            return Err(ProviderError::Rejected(format!(
+                "HTTP {status} asking for an upload URL: {}",
+                body.trim()
+            )));
+        }
+
+        let header = |name: &str| -> Option<String> {
+            resp.headers()
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string)
+        };
+        let file_id = header(FILE_ID_HEADER).ok_or_else(|| {
+            ProviderError::Malformed(format!(
+                "upload-URL response carried no {FILE_ID_HEADER} — the file cannot be referenced"
+            ))
+        })?;
+        let presigned = header("location").ok_or_else(|| {
+            ProviderError::Malformed("upload-URL response carried no Location".into())
+        })?;
+
+        // Step 2 — presigned; deliberately unauthenticated.
+        let put = self
+            .http
+            .put(&presigned)
+            .body(bytes.to_vec())
+            .send()
+            .map_err(|e| ProviderError::Unreachable(format!("uploading bytes: {e}")))?;
+        if !put.status().is_success() {
+            return Err(ProviderError::Rejected(format!(
+                "HTTP {} storing the file",
+                put.status()
+            )));
+        }
+
+        // Step 3
+        let confirm = self
+            .http
+            .post(self.url(&format!("files/{file_id}/preprocess")))
+            .bearer_auth(&self.api_key)
+            .send();
+        read(confirm)?;
+
+        Ok(file_id)
     }
 }
 
