@@ -100,6 +100,11 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
 
 **Next up — the gap the first real run exposed**
 
+- [x] **`data generate --db`** (2026-08-16) — the CLI matches the contract and
+      MCP: a Cerebro snapshot (`--db` + `--agent`) or a JSON export (`--from`),
+      not both. Mining prefixes ids with the file stem so two nodes cannot
+      collide. Does not train.
+
 - [x] **labelled banner titles** (2026-08-16) — first-line `PROCEDURE —` /
       `ARCHITECTURE DECISION` / `LABEL — rest` is a document title even when
       long or sentence-shaped. FORGE's lived procedures were 21% heading-framed

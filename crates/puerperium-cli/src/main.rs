@@ -63,7 +63,7 @@ enum Command {
 
 #[derive(Subcommand)]
 enum DataCmd {
-    /// Build a dataset from exported memories.
+    /// Build a dataset from a Cerebro snapshot or a memories JSON export.
     Generate(GenerateArgs),
     /// List datasets, newest first.
     List,
@@ -285,7 +285,19 @@ struct ApprenticeCreateArgs {
 struct GenerateArgs {
     /// JSON array of memory records (a Cerebro export).
     #[arg(long)]
-    from: PathBuf,
+    from: Option<PathBuf>,
+    /// Cerebro snapshot to mine. Opened READ-ONLY; prefer a `.backup` over a live file.
+    #[arg(long)]
+    db: Option<PathBuf>,
+    /// Whose memory space to mine when using `--db`. Not the trainer (charter D6).
+    #[arg(long)]
+    agent: Option<String>,
+    /// Keep only memories carrying at least one of these tags. `--db` only.
+    #[arg(long, value_delimiter = ',')]
+    tags: Vec<String>,
+    /// Cap memories mined, highest salience first. `--db` only.
+    #[arg(long)]
+    limit: Option<usize>,
     /// Dataset name. Must be unique — datasets are immutable.
     #[arg(long)]
     name: String,
@@ -298,6 +310,9 @@ struct GenerateArgs {
     /// Minimum content length in characters.
     #[arg(long)]
     min_content: Option<usize>,
+    /// Admit dream-engine memories. Off by default.
+    #[arg(long)]
+    include_dream: bool,
     /// Convert and report, but write nothing.
     #[arg(long)]
     dry_run: bool,
@@ -411,10 +426,51 @@ fn parse_type(s: &str) -> Result<MemoryType> {
 }
 
 fn generate(paths: &Paths, args: GenerateArgs) -> Result<()> {
-    let bytes =
-        std::fs::read(&args.from).with_context(|| format!("reading {}", args.from.display()))?;
-    let memories: Vec<MemoryRecord> = serde_json::from_slice(&bytes)
-        .with_context(|| format!("parsing {} as a memory export", args.from.display()))?;
+    anyhow::ensure!(
+        args.from.is_some() ^ args.db.is_some(),
+        "give --from (memories JSON) or --db (Cerebro snapshot), not both and not neither"
+    );
+
+    let (memories, source) = match (&args.from, &args.db) {
+        (Some(path), None) => {
+            let bytes =
+                std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+            let memories: Vec<MemoryRecord> = serde_json::from_slice(&bytes)
+                .with_context(|| format!("parsing {} as a memory export", path.display()))?;
+            let n = memories.len();
+            (
+                memories,
+                SourceSpec {
+                    kind: "export_file".into(),
+                    query: Some(path.display().to_string()),
+                    agent_id: None,
+                    memories_in: n,
+                },
+            )
+        }
+        (None, Some(db)) => {
+            let agent = args.agent.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("--agent is required with --db (not the trainer)")
+            })?;
+            let query = puerperium::source::cerebro_db::Query {
+                agent_id: Some(agent.to_string()),
+                any_tags: args.tags.clone(),
+                limit: args.limit,
+            };
+            let memories = puerperium::source::cerebro_db::mine(db, &query)?;
+            let n = memories.len();
+            (
+                memories,
+                SourceSpec {
+                    kind: "cerebro_query".into(),
+                    query: args.domain.clone(),
+                    agent_id: Some(agent.to_string()),
+                    memories_in: n,
+                },
+            )
+        }
+        _ => unreachable!("xor checked above"),
+    };
 
     let mut cfg = ConvertConfig::new();
     if !args.include_types.is_empty() {
@@ -424,6 +480,7 @@ fn generate(paths: &Paths, args: GenerateArgs) -> Result<()> {
             .map(|s| parse_type(s))
             .collect::<Result<_>>()?;
     }
+    cfg.filter.include_dream_derived = args.include_dream;
     if let Some(n) = args.min_content {
         cfg.filter = FilterConfig {
             min_content: n,
@@ -453,12 +510,6 @@ fn generate(paths: &Paths, args: GenerateArgs) -> Result<()> {
         return Ok(());
     }
 
-    let source = SourceSpec {
-        kind: "export_file".into(),
-        query: Some(args.from.display().to_string()),
-        agent_id: None,
-        memories_in: memories.len(),
-    };
     let meta = dataset::write(&paths.datasets(), &args.name, &out, source)?;
 
     println!(
@@ -942,8 +993,8 @@ fn apprentice_create(paths: &Paths, args: ApprenticeCreateArgs) -> Result<()> {
         args.db.len()
     );
 
-    // Memory ids are only unique within a store; two nodes can reuse one. Prefixing by
-    // source keeps provenance honest and stops a collision silently dropping a memory.
+    // Memory ids are only unique within a store; two nodes can reuse one.
+    // `mine` prefixes by file stem so a collision cannot silently drop a row.
     let mut memories = Vec::new();
     for (i, db) in args.db.iter().enumerate() {
         let agent = args
@@ -956,16 +1007,12 @@ fn apprentice_create(paths: &Paths, args: ApprenticeCreateArgs) -> Result<()> {
             any_tags: args.tags.clone(),
             limit: args.limit,
         };
-        let mut got = puerperium::source::cerebro_db::read(db, &query)?;
+        let mut got = puerperium::source::cerebro_db::mine(db, &query)?;
         println!(
             "mined {:>5} memories  {agent:<14} {}",
             got.len(),
             db.display()
         );
-        let stem = db.file_stem().and_then(|s| s.to_str()).unwrap_or("db");
-        for m in &mut got {
-            m.id = format!("{stem}:{}", m.id);
-        }
         memories.append(&mut got);
     }
     println!("mined {} memories total", memories.len());

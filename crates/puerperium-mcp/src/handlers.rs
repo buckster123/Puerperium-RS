@@ -637,12 +637,7 @@ fn mine_snapshot(
         any_tags: tags.to_vec(),
         limit,
     };
-    let mut got = cerebro_db::read(db, &query).map_err(|e| CallError::Failed(e.to_string()))?;
-    let stem = db.file_stem().and_then(|s| s.to_str()).unwrap_or("db");
-    for m in &mut got {
-        m.id = format!("{stem}:{}", m.id);
-    }
-    Ok(got)
+    cerebro_db::mine(db, &query).map_err(|e| CallError::Failed(e.to_string()))
 }
 
 fn convert_config(args: &Value) -> Result<ConvertConfig, CallError> {

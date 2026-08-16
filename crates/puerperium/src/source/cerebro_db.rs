@@ -54,6 +54,20 @@ pub struct Query {
     pub limit: Option<usize>,
 }
 
+/// Read a snapshot and prefix each memory id with the file stem.
+///
+/// Memory ids are only unique within one store; two nodes can reuse one.
+/// Prefixing keeps provenance honest and stops a collision silently dropping
+/// a memory when several snapshots are concatenated.
+pub fn mine(path: &Path, query: &Query) -> Result<Vec<MemoryRecord>, SourceError> {
+    let mut got = read(path, query)?;
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("db");
+    for m in &mut got {
+        m.id = format!("{stem}:{}", m.id);
+    }
+    Ok(got)
+}
+
 /// Read memories from a Cerebro snapshot.
 ///
 /// Soft-deleted rows are excluded — Cerebro's trash is not training data.
@@ -323,6 +337,26 @@ mod tests {
             err.to_string().contains("memory_nodes"),
             "should name the legacy table"
         );
+    }
+
+    #[test]
+    fn mine_prefixes_ids_with_the_file_stem() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = fixture(dir.path());
+        let got = mine(
+            &db,
+            &Query {
+                agent_id: Some("FORGE".into()),
+                ..Query::default()
+            },
+        )
+        .expect("mine");
+        assert!(
+            got.iter().all(|m| m.id.starts_with("cerebro:")),
+            "got {:?}",
+            got.iter().map(|m| m.id.as_str()).collect::<Vec<_>>()
+        );
+        assert!(got.iter().any(|m| m.id == "cerebro:m1"));
     }
 
     /// The database is another tool's state; opening it must never create one.
