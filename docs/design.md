@@ -26,7 +26,7 @@ refusal naming what is missing (D8), never an absence and never a fake success.
 
 | Tool | Purpose |
 |---|---|
-| `nursery_generate_data` | Build an instruction dataset. Source is either a **Cerebro query** (`query`, `agent_id`, optional tag filter) or **synthetic templates** over supplied tool schemas. Writes JSONL, stamps provenance per example, hashes the file (D12). |
+| `nursery_generate_data` | Build an instruction dataset. Source is a **Cerebro snapshot** (`db` + `agent_id`, opened read-only) or a **memories JSON export** (`from`). Writes JSONL, stamps provenance per example, hashes the file (D12). `dry_run` defaults **true** (datasets are immutable). **Synthetic templates are not built** — that path refuses honestly rather than inventing examples. |
 | `nursery_list_datasets` | Datasets with example counts, source kind, `sha256`, creation time. |
 | `nursery_inspect_dataset` | First N examples plus the provenance histogram — *where did this data come from?* answered without opening the file. |
 
@@ -38,25 +38,27 @@ its -RS analogue (Cerebro episodes + session JSONL) is a source kind inside
 
 | Tool | Purpose |
 |---|---|
-| `nursery_estimate_cost` | Tokens · time · dollars for a dataset × base × method, **per viable provider**. Reports training and hosting separately (see Open questions). Honest `base_not_supported` rather than a guessed number. Free — no upstream spend. |
-| `nursery_train` | Submit a job. Requires compute that **already exists** (D4). Returns a job id immediately; never blocks. |
-| `nursery_job_status` | One job: facts from the record, phase computed live from the provider (D3). |
-| `nursery_list_jobs` | All jobs, newest first, phases computed. |
-| `nursery_cancel_job` | Best-effort cancel upstream; the record keeps the attempt either way. |
+| `nursery_estimate_cost` | Local heuristic for a dataset × size × epochs. **FREE.** Ignores Together's minimum charge — do not use this for a spend decision. Honest `base_not_supported` rather than a guessed number. |
+| `nursery_quote` | Together's own `POST /v1/fine-tunes/estimate-price`. **FREE and authoritative** — includes the minimum charge. Needs `TOGETHER_API_KEY` and a `training_file_id` from `nursery_upload`. |
+| `nursery_upload` | Project a dataset to the provider schema and upload it. Returns `training_file_id` and binds it to the dataset hash. Costs nothing. Needs `TOGETHER_API_KEY`. |
+| `nursery_train` | Submit a LoRA job. **Never spends unless `confirm` is true** (D4). `dry_run` defaults true and prints the unresolved body (labelled as such). Requires a `training_file_id` from `nursery_upload`. Compute, if named, must **already exist**. Returns a job id immediately; never blocks. |
+| `nursery_job_status` | One job: facts from the record, phase computed live from the provider (D3). Unreachable provider is `Unknown`, not `Failed`. |
+| `nursery_list_jobs` | All jobs, newest first, phases computed. Unreadable snapshots are reported, not hidden. |
+| `nursery_cancel_job` | Ask the upstream to stop. Records `cancel_requested_at`; does not write local `Cancelled`. |
 
 ### Model cradle
 
 | Tool | Purpose |
 |---|---|
 | `nursery_list_models` | Registered adapters: base, dataset hash, trainer, artifact path, lineage. |
-| `nursery_register_model` | The **explicit** handoff verb: take a finished artifact and register it as a Router backend/alias. Separate from training on purpose — it keeps D2's boundary visible. |
-| `nursery_test_model` | Send a prompt at a registered model and return the raw reply. Deliberately dumb — real evaluation is the Watcher's job, and the Watcher is Stage 2. |
+| `nursery_register_model` | The **explicit** handoff verb: take a finished artifact and register it as a Router backend/alias. Separate from training on purpose — it keeps D2's boundary visible. `dry_run` defaults true; live needs `confirm: true`. Records `alias_requested`, never liveness (D3). |
+| `nursery_test_model` | Present so the agent can see it (D8). Evaluation is the Watcher's job (Stage 2) — this verb currently **refuses honestly** rather than faking a score or starting a dedicated endpoint. |
 
 ### Apprentice protocol
 
 | Tool | Purpose |
 |---|---|
-| `nursery_create_apprentice` | The headline verb: master agent + specialization → Cerebro query → dataset → (optional) training job → `ApprenticeRecord`. Composes the three groups above; adds no new capability of its own. |
+| `nursery_create_apprentice` | The headline verb: master agent + specialization → Cerebro snapshot (read-only) → dataset → untrained `ApprenticeRecord`. Composes the three groups above; adds no new capability of its own. **Never trains** (D4). `dry_run` defaults true. |
 | `nursery_list_apprentices` | Apprentices with master, specialization, trained-or-not, lineage. |
 | `nursery_lineage` | Trace any model or apprentice back through datasets, jobs and ancestors to the memories it came from. **This is the product** — everything else exists so this can answer. |
 

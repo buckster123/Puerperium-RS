@@ -37,8 +37,8 @@ routed work → repeat.** Rewriting the driver model's own weights is Stage 2, d
 ```
 crates/
   puerperium/         # core lib — datasets, jobs, registry, lineage. No I/O glue.
-  puerperium-cli/     # clap CLI — the human/ops face (shipped)
-  # puerperium-mcp/   # agent face (nursery_* tools) — not built yet; D1 still wants it
+  puerperium-cli/     # clap CLI — the human/ops face
+  puerperium-mcp/     # MCP stdio server — the agent face (nursery_* tools)
 docs/CHARTER.md       # binding decisions D1–D12, phases, scope fence
 docs/design.md        # THE contract — tool surface, types, lifecycle
 docs/rebirth.md       # Stage 2 design freeze (R0) — no code ships from this

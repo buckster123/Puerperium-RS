@@ -12,6 +12,12 @@
 > explicit don't. Cross-project version drift lives in
 > `~/Projects/Launchpad-RS/docs/sharp-edges.md` instead.
 
+- **MCP stdout is sacred.** `puerperium-mcp` speaks newline-delimited JSON-RPC on stdout.
+  All `tracing` goes to **stderr**. A stray `println!` (or anything else that writes a
+  non-JSON line to stdout) corrupts the stream and the client sees a parse error that
+  looks like the nursery is down. **Don't log, print, or dump debug output on stdout in
+  the MCP crate — not even in a handler that "only runs locally".**
+
 - **Dream-consolidated memories are the wrong training material, and there will be a lot of
   them.** Cerebro's consolidation phases mint memories tagged `dream_extracted` /
   `dream_distilled`. On a real node **1579 of 1629** procedural/schematic memories were
