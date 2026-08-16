@@ -24,6 +24,15 @@
   path guard writes wherever the archive points. **Don't gunzip it, and don't extract
   an entry whose path leaves the destination.**
 
+- **A labelled first-line banner is a title, even when it is long or ends with a
+  period.** FORGE's lived procedures open with `PROCEDURE — …` / `LABEL — rest`.
+  The original title rule (≤120 chars, not a sentence) dropped every one of
+  them, so a 314-memory FORGE mine framed 61 of 77 examples from tags. An
+  em-dash used as list punctuation later in a sentence (`cargo test — all pass`)
+  is not a title — the dash has to land in the first 50 characters.
+  **Don't treat every long first line as a heading, and don't take a late
+  em-dash as a separator.**
+
 - **Unframeable is per-chunk; the rejection ledger is per-memory.** A long memory
   can split into several chunks that each fail to frame. Counting each one as a
   rejection made `memories_used + rejections.total()` exceed the input length, so

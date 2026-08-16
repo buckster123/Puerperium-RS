@@ -100,6 +100,12 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
 
 **Next up — the gap the first real run exposed**
 
+- [x] **labelled banner titles** (2026-08-16) — first-line `PROCEDURE —` /
+      `ARCHITECTURE DECISION` / `LABEL — rest` is a document title even when
+      long or sentence-shaped. FORGE's lived procedures were 21% heading-framed
+      because the 120-char / no-period rule dropped them. Does not invent
+      examples; it upgrades the frame. A healthy *count* is still the S6 gap.
+
 - [x] **convert Unframeable accounting** (2026-08-16) — a memory that splits into N
       unframeable chunks is one rejection, not N. `unframeable_chunks` is the chunk
       tally; `memories_used + rejections.total()` equals the input length again.

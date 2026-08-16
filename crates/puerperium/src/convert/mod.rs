@@ -239,6 +239,39 @@ mod tests {
         assert_eq!(got.memories_used + got.rejections.total(), 1);
     }
 
+    /// FORGE's lived procedures carry useful tags *and* a labelled banner.
+    /// The banner is the stronger frame — tags are the fallback, not the winner.
+    #[test]
+    fn labelled_banner_frames_as_heading_not_tags() {
+        let body = "PROCEDURE — Shipping a roadmap phase in the ApexOS Rust repos.\n\n\
+                    WHEN: André approves a phase from a docs/build-roadmap.md row. \
+                    Lock the design first if the arc is new, then one branch per \
+                    slice, and do not start the next row until this one is merged.";
+        let got = convert(
+            &[mem(
+                "m1",
+                body,
+                MemoryType::Procedural,
+                &["apexos", "workflow", "forge"],
+            )],
+            &ConvertConfig::new(),
+        );
+
+        assert_eq!(got.examples.len(), 1);
+        assert_eq!(
+            got.framing.get(&InstructionKind::TemplatedHeading).copied(),
+            Some(1)
+        );
+        assert!(!got.framing.contains_key(&InstructionKind::TemplatedTag));
+        assert!(
+            got.examples[0].messages[0]
+                .content
+                .starts_with("Explain: PROCEDURE — Shipping a roadmap phase"),
+            "got {}",
+            got.examples[0].messages[0].content
+        );
+    }
+
     #[test]
     fn tags_rescue_an_otherwise_unframeable_memory() {
         let body = "This is a plain paragraph of prose that ends in a period. It carries no \

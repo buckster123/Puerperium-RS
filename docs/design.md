@@ -422,6 +422,11 @@ above as a named regression case.
 - **Markdown-sectioned content** (`##`/`###`, 22 of 59 procedural memories): one chunk per
   section, carrying its heading path (`Doc Title › ## Section › ### Subsection`). Sections
   under `MIN_CONTENT` merge forward into the next.
+- **Document title**: the first line, when it is a short banner (≤120 chars, not a
+  sentence) **or** a labelled banner (`PROCEDURE — …`, `ARCHITECTURE DECISION …`,
+  `LABEL — rest` with the dash in the first 50 characters). FORGE's lived procedures
+  write the title as a long sentence; those are titles, not prose openers. An em-dash
+  used as list punctuation later in a how-to sentence is not.
 - **Unsectioned content**: one chunk, whole. No paragraph splitting — a lesson split mid-thought
   produces two half-lessons, which is worse than one long one.
 - Chunks over `MAX_CHUNK` (default 6000 chars) split at paragraph boundaries, never mid-line.
