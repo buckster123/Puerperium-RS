@@ -31,6 +31,8 @@ pub struct ProviderStatus {
     /// The upstream's own word for its state, kept verbatim. When `phase` is
     /// [`Phase::Unknown`] this is the only thing that can explain why.
     pub upstream_status: String,
+    /// Together reports this in nano-dollars. [`None`] until they say.
+    pub total_price_nanodollars: Option<u64>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -161,5 +163,6 @@ pub fn status(phase: Phase, upstream: &str) -> ProviderStatus {
         artifact: None,
         error: None,
         upstream_status: upstream.to_string(),
+        total_price_nanodollars: None,
     }
 }

@@ -13,6 +13,18 @@ use serde::Deserialize;
 use crate::job::{Hyperparams, Phase};
 use crate::provider::{ProviderError, ProviderStatus, SubmitRequest};
 
+/// Together's LoRA-capable Qwen3.6 base. The dense 27B is a local/vast serving name.
+pub const DEFAULT_BASE: &str = "Qwen/Qwen3.6-35B-A3B";
+
+/// `$PUERPERIUM_DEFAULT_BASE` if set, else [`DEFAULT_BASE`].
+pub fn default_base() -> String {
+    std::env::var("PUERPERIUM_DEFAULT_BASE")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| DEFAULT_BASE.to_string())
+}
+
 /// `POST /v1/fine-tunes` body.
 ///
 /// What a model's fine-tuning limits say. Parsed from
@@ -69,23 +81,45 @@ pub fn parse_limits(body: &str) -> Result<Limits, ProviderError> {
 
 /// Resolve requested hyperparameters against a model's published limits.
 ///
-/// Pure. This is what the SDK does client-side, and skipping it is why a hand-built body gets
-/// `"Could not create the FineTune object (Binding)"` — an opaque refusal that names nothing.
-/// Doing it here turns a class of paid-path 400s into local arithmetic.
-pub fn resolve(mut hp: Hyperparams, limits: &Limits) -> Hyperparams {
-    // `"max"` is resolved BY THE CLIENT; the API wants a number. min == max on some models,
-    // so there is exactly one legal value.
-    hp.batch_size = Some(match hp.batch_size {
-        Some(b) => b.clamp(limits.min_batch_size.max(1), limits.max_batch_size.max(1)),
-        None => limits.max_batch_size.max(1),
+/// Pure. Fills an omitted `batch_size` with the model's max (the SDK's `"max"` token).
+/// An explicit value outside the published range is **refused**, never clamped — silently
+/// changing what the operator asked for is how a spend decision becomes a different job.
+pub fn resolve(hp: Hyperparams, limits: &Limits) -> Result<Hyperparams, ProviderError> {
+    let mut out = hp.clone();
+    let min_b = limits.min_batch_size.max(1);
+    let max_b = limits.max_batch_size;
+    out.batch_size = Some(match hp.batch_size {
+        None => {
+            if max_b == 0 {
+                return Err(ProviderError::Rejected(
+                    "model published max_batch_size 0 — cannot resolve batch_size".into(),
+                ));
+            }
+            max_b
+        }
+        Some(b) => {
+            let max = max_b.max(1);
+            if b < min_b || b > max {
+                return Err(ProviderError::Rejected(format!(
+                    "batch_size {b} is outside the model's published range {min_b}..={max}"
+                )));
+            }
+            b
+        }
     });
     if limits.max_rank > 0 && hp.lora_r > limits.max_rank {
-        hp.lora_r = limits.max_rank;
+        return Err(ProviderError::Rejected(format!(
+            "lora_r {} exceeds the model's max_rank {}",
+            hp.lora_r, limits.max_rank
+        )));
     }
     if limits.max_num_epochs > 0 && hp.n_epochs > limits.max_num_epochs {
-        hp.n_epochs = limits.max_num_epochs;
+        return Err(ProviderError::Rejected(format!(
+            "n_epochs {} exceeds the model's max_num_epochs {}",
+            hp.n_epochs, limits.max_num_epochs
+        )));
     }
-    hp
+    Ok(out)
 }
 
 /// `POST /v1/fine-tunes` body, with the model's own target modules.
@@ -186,6 +220,14 @@ struct StatusResponse {
     adapter_output_name: Option<String>,
     #[serde(default)]
     model_output_name: Option<String>,
+    /// Upstream's own words — string or `{ "message": "…" }`.
+    #[serde(default)]
+    error: Option<serde_json::Value>,
+    #[serde(default)]
+    error_message: Option<String>,
+    /// Nano-dollars. A completed job reporting `4000000000` cost $4.00.
+    #[serde(default)]
+    total_price: Option<u64>,
 }
 
 /// Map a poll response onto a phase, an artifact and an honest reason.
@@ -193,15 +235,38 @@ pub fn parse_status_response(body: &str) -> Result<ProviderStatus, ProviderError
     let parsed: StatusResponse = serde_json::from_str(body)
         .map_err(|e| ProviderError::Malformed(format!("status response was not JSON: {e}")))?;
 
-    let raw = parsed.status.unwrap_or_default();
+    let raw = parsed.status.clone().unwrap_or_default();
     let phase = map_status(&raw);
+    let upstream_error = error_text(&parsed);
 
     Ok(ProviderStatus {
         phase,
         artifact: parsed.adapter_output_name.or(parsed.model_output_name),
-        error: failure_reason(&raw),
+        error: failure_reason(&raw, upstream_error.as_deref()),
         upstream_status: raw,
+        total_price_nanodollars: parsed.total_price,
     })
+}
+
+fn error_text(parsed: &StatusResponse) -> Option<String> {
+    if let Some(s) = parsed
+        .error_message
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return Some(s.to_string());
+    }
+    match &parsed.error {
+        Some(serde_json::Value::String(s)) if !s.trim().is_empty() => Some(s.clone()),
+        Some(serde_json::Value::Object(m)) => m
+            .get("message")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        _ => None,
+    }
 }
 
 /// Together's `FinetuneJobStatus` → our [`Phase`].
@@ -223,15 +288,23 @@ pub fn map_status(raw: &str) -> Phase {
 
 /// Both failure states become `Failed`, but the distinction survives in the reason —
 /// "your dataset was rejected" and "our trainer fell over" call for different actions.
-fn failure_reason(raw: &str) -> Option<String> {
+fn failure_reason(raw: &str, upstream: Option<&str>) -> Option<String> {
+    let specific = upstream
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
     match raw {
-        "user_error" => Some(
+        "user_error" => Some(specific.unwrap_or_else(|| {
             "upstream reported user_error — the request or dataset was rejected; \
              check the dataset format and the base model before resubmitting"
-                .into(),
-        ),
-        "error" => Some("upstream reported error — the training run itself failed".into()),
-        _ => None,
+                .into()
+        })),
+        "error" => {
+            Some(specific.unwrap_or_else(|| {
+                "upstream reported error — the training run itself failed".into()
+            }))
+        }
+        _ => specific,
     }
 }
 
@@ -324,12 +397,27 @@ pub fn lora_price_per_mtok(params_b: f64) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::job::Method;
+    use crate::job::{Hyperparams, Method};
+
+    fn qwen_limits() -> Limits {
+        Limits {
+            max_batch_size: 16,
+            min_batch_size: 8,
+            max_rank: 64,
+            target_modules: vec![
+                "k_proj".into(),
+                "o_proj".into(),
+                "q_proj".into(),
+                "v_proj".into(),
+            ],
+            max_num_epochs: 10,
+        }
+    }
 
     fn req() -> SubmitRequest {
         SubmitRequest {
             training_file_id: "file-abc".into(),
-            base_model: "Qwen/Qwen3.6-27B".into(),
+            base_model: "Qwen/Qwen3.6-35B-A3B".into(),
             output_name: "worker-v1".into(),
             method: Method::LoraSft,
             hyperparams: Hyperparams::default(),
@@ -345,7 +433,7 @@ mod tests {
         );
         assert_eq!(body["training_type"]["lora_r"], 16);
         assert_eq!(body["training_type"]["lora_alpha"], 32);
-        assert_eq!(body["model"], "Qwen/Qwen3.6-27B");
+        assert_eq!(body["model"], "Qwen/Qwen3.6-35B-A3B");
         assert_eq!(body["suffix"], "worker-v1");
         assert_eq!(body["training_file"], "file-abc");
         // Omitting it is rejected upstream with "batch size is zero".
@@ -363,6 +451,74 @@ mod tests {
             body["training_type"]["lora_trainable_modules"],
             "all-linear"
         );
+    }
+
+    #[test]
+    fn parse_limits_reads_a_lora_capable_model() {
+        let body = r#"{
+            "max_num_epochs": 10,
+            "lora_training": {
+                "max_batch_size": 16,
+                "min_batch_size": 8,
+                "max_rank": 64,
+                "target_modules": ["k_proj","o_proj","q_proj","v_proj"]
+            }
+        }"#;
+        let got = parse_limits(body).expect("parse");
+        assert_eq!(got, qwen_limits());
+    }
+
+    #[test]
+    fn parse_limits_treats_a_message_as_a_free_refusal() {
+        let err = parse_limits(
+            r#"{"message":"Model Qwen/Qwen3.6-27B is not available for fine-tuning"}"#,
+        )
+        .expect_err("must refuse");
+        assert!(matches!(err, ProviderError::Rejected(_)), "got {err:?}");
+        assert!(err.to_string().contains("Qwen/Qwen3.6-27B"));
+    }
+
+    #[test]
+    fn resolve_fills_omitted_batch_size_and_refuses_to_clamp() {
+        let filled = resolve(Hyperparams::default(), &qwen_limits()).expect("fill");
+        assert_eq!(filled.batch_size, Some(16));
+
+        let mut in_range = Hyperparams::default();
+        in_range.batch_size = Some(8);
+        assert_eq!(
+            resolve(in_range, &qwen_limits())
+                .expect("in range")
+                .batch_size,
+            Some(8)
+        );
+
+        let mut high = Hyperparams::default();
+        high.batch_size = Some(64);
+        let err = resolve(high, &qwen_limits()).expect_err("must not clamp");
+        assert!(err.to_string().contains("batch_size 64"), "got {err}");
+
+        let mut rank = Hyperparams::default();
+        rank.lora_r = 128;
+        let err = resolve(rank, &qwen_limits()).expect_err("must not clamp rank");
+        assert!(err.to_string().contains("lora_r 128"), "got {err}");
+
+        let mut epochs = Hyperparams::default();
+        epochs.n_epochs = 20;
+        let err = resolve(epochs, &qwen_limits()).expect_err("must not clamp epochs");
+        assert!(err.to_string().contains("n_epochs 20"), "got {err}");
+    }
+
+    #[test]
+    fn default_base_honours_the_env_override() {
+        let saved = std::env::var("PUERPERIUM_DEFAULT_BASE").ok();
+        std::env::remove_var("PUERPERIUM_DEFAULT_BASE");
+        assert_eq!(default_base(), DEFAULT_BASE);
+        std::env::set_var("PUERPERIUM_DEFAULT_BASE", "acct/custom-base");
+        assert_eq!(default_base(), "acct/custom-base");
+        match saved {
+            Some(v) => std::env::set_var("PUERPERIUM_DEFAULT_BASE", v),
+            None => std::env::remove_var("PUERPERIUM_DEFAULT_BASE"),
+        }
     }
 
     #[test]
@@ -444,6 +600,17 @@ mod tests {
             "the two failures must not read the same"
         );
         assert!(user.error.expect("reason").contains("dataset"));
+
+        let with_text = parse_status_response(
+            r#"{"status":"user_error","error":"Found extra column","total_price":4000000000}"#,
+        )
+        .expect("parse");
+        assert_eq!(
+            with_text.error.as_deref(),
+            Some("Found extra column"),
+            "upstream words beat our generic"
+        );
+        assert_eq!(with_text.total_price_nanodollars, Some(4_000_000_000));
     }
 
     #[test]

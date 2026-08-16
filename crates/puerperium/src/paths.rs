@@ -42,6 +42,7 @@ impl Paths {
         store::ensure_dir(&self.datasets())?;
         store::ensure_dir(&self.models())?;
         store::ensure_dir(&self.apprentices())?;
+        store::ensure_dir(&self.uploads())?;
         Ok(())
     }
 
@@ -55,6 +56,11 @@ impl Paths {
 
     pub fn apprentices(&self) -> PathBuf {
         self.root.join("apprentices")
+    }
+
+    /// Bindings from a Together `training_file_id` to the dataset that was uploaded.
+    pub fn uploads(&self) -> PathBuf {
+        self.root.join("uploads")
     }
 
     /// Where a model's artifacts live, as distinct from its record.
@@ -73,6 +79,7 @@ mod tests {
         assert_eq!(p.datasets(), Path::new("/tmp/x/datasets"));
         assert_eq!(p.models(), Path::new("/tmp/x/models"));
         assert_eq!(p.apprentices(), Path::new("/tmp/x/apprentices"));
+        assert_eq!(p.uploads(), Path::new("/tmp/x/uploads"));
         assert_eq!(p.model_artifacts("m1"), Path::new("/tmp/x/models/m1"));
     }
 

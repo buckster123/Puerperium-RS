@@ -168,7 +168,7 @@ cargo build --release --workspace
 ./target/release/puerperium estimate --dataset my-set --params-b 35 --epochs 3
 ./target/release/puerperium job quote file-abc --base-model Qwen/Qwen3.6-35B-A3B
 ./target/release/puerperium job submit --id j1 --dataset my-set --output-name worker-v2 \
-    --training-file-id file-abc --dry-run       # prints the body, contacts nothing
+    --training-file-id file-abc --dry-run       # unresolved body; contacts nothing
 ./target/release/puerperium data export my-set --to /tmp/upload.jsonl   # offline, validates
 ./target/release/puerperium job upload my-set          # -> training_file_id
 ./target/release/puerperium job list                   # polls non-terminal jobs

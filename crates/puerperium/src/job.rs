@@ -159,6 +159,9 @@ pub struct JobRecord {
     /// observed `cancelled` from the provider is [`Outcome::Cancelled`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cancel_requested_at: Option<DateTime<Utc>>,
+    /// Together `total_price`, nano-dollars. [`None`] until the upstream reports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_price_nanodollars: Option<u64>,
     /// ApexRouter ledger rows, for cost attribution. Referenced, never duplicated — Router
     /// stays the single source of truth for what money happened.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -361,6 +364,7 @@ mod tests {
             submitted_at: Utc::now(),
             terminal: None,
             cancel_requested_at: None,
+            total_price_nanodollars: None,
             ledger_refs: vec![],
         }
     }

@@ -86,6 +86,7 @@ pub struct JobRecord {
     pub submitted_at: DateTime<Utc>,
     pub terminal: Option<Terminal>,      // written ONCE, when observed terminal
     pub cancel_requested_at: Option<DateTime<Utc>>, // the ask; not an outcome
+    pub total_price_nanodollars: Option<u64>, // Together; nano-dollars
     pub ledger_refs: Vec<String>,        // ApexRouter ledger rows, for cost attribution
 }
 
@@ -119,9 +120,9 @@ The request body must carry Together's **full** parameter set — every field th
 client-side. Omission is read as zero, not as "use the default". `submit` first calls the free
 `GET /v1/fine-tunes/models/limits?model_name=…` and resolves against it:
 
-- `batch_size` — `"max"` is a *client-side* token; the API wants a number, and some models
-  publish `min == max` (exactly one legal value)
-- `lora_r` — clamped to `max_rank`
+- `batch_size` — `"max"` is a *client-side* token; an omitted value is filled with the
+  model's published max. An **explicit** value outside `min..=max` is refused, never clamped.
+- `lora_r` / `n_epochs` — refused when they exceed the published max, never silently reduced
 - `lora_trainable_modules` — the model's own `target_modules`, not `"all-linear"`
 
 That call is also the honest base check: a model that is not fine-tunable answers with a
@@ -284,6 +285,13 @@ observed terminal ──► write Terminal ONCE (immutable)
   `#[serde(default)]`.
 - A rejected submit writes a terminal record **and** the CLI exits non-zero. The record is
   the fact; the exit status is the operator signal.
+- HTTP 408 / 429 / 5xx are **Unreachable**, not Rejected — a rate-limit or trainer blip
+  must not stop polling a job that is still billing.
+- `training_file_id` is bound to the projected dataset hash at upload. Submit refuses an
+  unbound or mismatched file — the record names a dataset, the upstream trains on a file,
+  and those two must be the same bytes.
+- `--dry-run` prints the *unresolved* body and says so. Resolving needs the limits
+  endpoint; dry-run contacts nothing.
 - Every failure path carries the real reason. No job can sit non-terminal *because* nothing
   looked at it — `nursery_list_jobs` polls.
 
@@ -509,6 +517,7 @@ Refusals, each because the alternative looks like progress and is not:
 ├── models/<output_name>/           # adapter artifacts
 ├── apprentices/<id>.json
 ├── jobs.jsonl                      # append-only; facts only
+├── uploads/<file-id>.json          # training_file_id → dataset hash
 └── fixtures/                       # captured upstream JSON for hermetic tests (D5)
 ```
 
@@ -523,9 +532,9 @@ registry files are `0600`. **Nothing is ever written into the repo directory.**
 |-----|---------|---------|
 | `PUERPERIUM_STATE_DIR` | `~/.local/share/puerperium` | state root |
 | `PUERPERIUM_ROUTER_URL` | `http://127.0.0.1:2739` | Router control plane, **read-only use** |
-| `PUERPERIUM_DEFAULT_BASE` | `Qwen/Qwen3.6-27B` | default fine-tune base |
+| `PUERPERIUM_DEFAULT_BASE` | `Qwen/Qwen3.6-35B-A3B` | default Together fine-tune base |
 | `PUERPERIUM_TRAINER_AGENT` | `FORGE` | fallback when a caller supplies none |
-| `TOGETHER_API_KEY` | unset | required for the Together path; **INSTALLED ≠ ACTIVE** without it |
+| `TOGETHER_API_KEY` | unset | required for the Together path; `from_env` loads the house env file |
 | `RUST_LOG` | `info` | tracing filter — **stderr only**, stdout is JSON-RPC |
 
 All knobs are env-only in v1; if a config file arrives later, its precedence gets stated here
@@ -565,9 +574,8 @@ Each of these is a future `gotchas.md` entry waiting to happen.
 
 Tracked in `CHARTER.md`; restated here where they bind the contract.
 
-- **Does Together accept `Qwen/Qwen3.6-27B` as a fine-tune base?** Pricing places it in the
-  $1.50/1M 17–69B LoRA band, but the supported-base list is separate and moves. Resolve at S3;
-  until then `nursery_estimate_cost` must be able to say `base_not_supported`.
+- ~~**Does Together accept `Qwen/Qwen3.6-27B` as a fine-tune base?**~~ **No** (2026-08-03).
+  The LoRA base is `Qwen/Qwen3.6-35B-A3B`. The dense 27B remains the local/vast default.
 - **Hosting is a second, ongoing charge.** `nursery_estimate_cost` should return training and
   hosting as separate labelled figures. A single blended number would be the dishonest kind of
   simplification.
