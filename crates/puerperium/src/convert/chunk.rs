@@ -65,7 +65,16 @@ pub fn chunk(content: &str, cfg: &ChunkConfig) -> Vec<Chunk> {
         .collect()
 }
 
-/// The first line, when it reads like a title: short, and not a sentence.
+/// The first line, when it reads like a title.
+///
+/// Two shapes, both from the live store:
+///
+/// - **Short banner** (≤ `max_title`, not a sentence). The VLLM-style reference doc.
+/// - **Labelled banner** (`PROCEDURE — …`, `ARCHITECTURE DECISION …`, `LABEL — rest`).
+///   FORGE's lived procedures write the title as a long sentence. The 120-char /
+///   no-period rule dropped every one of them, so a 314-memory FORGE mine framed
+///   61 of 77 examples from tags. A labelled banner is a title even when it is
+///   long and even when it ends with a period.
 ///
 /// A `##`+ line is a *section*, never the document title — otherwise the same line would be
 /// consumed twice, once as the title and once as the first heading.
@@ -76,7 +85,13 @@ fn document_title(content: &str, max_title: usize) -> Option<String> {
     }
 
     let stripped = first.trim_start_matches('#').trim();
-    if stripped.is_empty() || stripped.chars().count() > max_title {
+    if stripped.is_empty() {
+        return None;
+    }
+    if is_labelled_banner(stripped) {
+        return Some(stripped.to_string());
+    }
+    if stripped.chars().count() > max_title {
         return None;
     }
 
@@ -87,6 +102,51 @@ fn document_title(content: &str, max_title: usize) -> Option<String> {
     } else {
         None
     }
+}
+
+/// A first line that names the document, even when it is long or sentence-shaped.
+///
+/// Conservative on purpose: a prose opener that happens to contain an em-dash
+/// later in the sentence is not a title. The dash has to land in the first 50
+/// characters, and the left-hand side has to look like a label.
+fn is_labelled_banner(line: &str) -> bool {
+    let head = line
+        .chars()
+        .take(48)
+        .collect::<String>()
+        .to_ascii_uppercase();
+    if head.starts_with("PROCEDURE ")
+        || head.starts_with("PROCEDURE:")
+        || head.starts_with("PROCEDURE—")
+        || head.starts_with("ARCHITECTURE DECISION")
+    {
+        return true;
+    }
+    labelled_emdash_title(line)
+}
+
+/// `LABEL — rest` where the dash is a title separator, not list punctuation.
+///
+/// Real titles: `THE CALLOSUM FIELD LOOP — how FORGE field-proves…`,
+/// `ApexOS-RS — VISION TOOL-RESULT PATTERN…`.
+/// Not a title: `…binary updates: (1) cargo test — all pass` (dash at column 70).
+fn labelled_emdash_title(line: &str) -> bool {
+    let Some(idx) = line.find(" — ") else {
+        return false;
+    };
+    if idx == 0 || idx > 50 {
+        return false;
+    }
+    looks_like_label(&line[..idx])
+}
+
+fn looks_like_label(s: &str) -> bool {
+    let s = s.trim();
+    if s.is_empty() || s.ends_with('.') {
+        return false;
+    }
+    let words = s.split_whitespace().count();
+    (1..=8).contains(&words) && s.chars().count() <= 50
 }
 
 /// Split on `##`+ headings. Returns `None` when the content has no headings at all.
@@ -342,5 +402,78 @@ mod tests {
     #[test]
     fn empty_content_yields_no_chunks() {
         assert!(chunk("   \n  ", &ChunkConfig::default()).is_empty());
+    }
+
+    /// Captured from the FORGE store (2026-08-16). The first line is a labelled
+    /// banner, longer than `max_title`, and ends with a period — both of the
+    /// old title rules rejected it, so the procedure framed from tags.
+    #[test]
+    fn procedure_banner_is_a_title_even_when_long_and_sentence_shaped() {
+        let title = concat!(
+            "PROCEDURE — Diagnosing a hung write behind a tokio RwLock ",
+            "(write-starvation), and the live-probe toolkit. Forged in ",
+            "ApexOS-RS session 21 hunting the mesh add-peer hang.",
+        );
+        let body = format!(
+            "{title}\n\n\
+             SYMPTOM PATTERN: an HTTP write hangs forever while reads \
+             on the same resource return immediately. That split is the \
+             signature of a writer waiting on a lock the readers keep \
+             refreshing."
+        );
+        let chunks = chunk(&body, &ChunkConfig::default());
+        assert_eq!(chunks.len(), 1, "still one unsectioned lesson");
+        assert_eq!(chunks[0].heading_path, vec![title]);
+    }
+
+    #[test]
+    fn architecture_decision_banner_is_a_title() {
+        let body = "ARCHITECTURE DECISION (2026-06-20, André) — Occipital recall \
+                    is INTENTIONALLY node-global; do NOT add per-agent scoping.\n\n\
+                    web_recall means search pages this NODE has fetched. That is \
+                    the tool working as designed, not a leak of someone else's memory.";
+        let chunks = chunk(body, &ChunkConfig::default());
+        assert!(
+            chunks[0].heading_path[0].starts_with("ARCHITECTURE DECISION"),
+            "got {:?}",
+            chunks[0].heading_path
+        );
+    }
+
+    #[test]
+    fn label_emdash_banner_is_a_title() {
+        let body = "THE CALLOSUM FIELD LOOP — how FORGE field-proves an \
+                    ApexOS-RS slice on apex1 (proven 3×).\n\n\
+                    Run the smokes on the node, not in CI, and write the \
+                    result back as a session note before calling the slice done.";
+        let chunks = chunk(body, &ChunkConfig::default());
+        assert!(
+            chunks[0].heading_path[0].starts_with("THE CALLOSUM FIELD LOOP"),
+            "got {:?}",
+            chunks[0].heading_path
+        );
+    }
+
+    /// Em-dash used as list punctuation late in a how-to sentence is not a title.
+    #[test]
+    fn late_emdash_in_prose_is_not_a_title() {
+        let body = "Pi deploy workflow for CerebroCortex-RS binary updates: \
+                    (1) cargo test — all pass. (2) git add + git commit + push. \
+                    (3) pull on the Pi and restart the unit.";
+        let chunks = chunk(body, &ChunkConfig::default());
+        assert!(
+            chunks[0].heading_path.is_empty(),
+            "list punctuation must not become a title, got {:?}",
+            chunks[0].heading_path
+        );
+    }
+
+    #[test]
+    fn ordinary_prose_opener_is_still_not_a_title() {
+        let body = "CerebroCortex-RS is a pure-Rust port of the Python CerebroCortex. \
+                    Goal: single binary drop-in with the same SQLite file and the \
+                    same MCP tool names the agents already call.";
+        let chunks = chunk(body, &ChunkConfig::default());
+        assert!(chunks[0].heading_path.is_empty());
     }
 }
