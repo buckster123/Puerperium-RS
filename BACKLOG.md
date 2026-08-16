@@ -53,6 +53,11 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
       memory beats its base on a real task — **measured, not asserted**. This is the point of
       the whole thing; nothing above counts until this row is ticked.
 
+- [x] **MCP face (D1 groundwork, 2026-08-16)**: `puerperium-mcp` — sixteen `nursery_*` tools
+      over newline-delimited JSON-RPC `2024-11-05`. Thin over the lib; spend verbs default
+      to dry-run and need `confirm: true`. `nursery_test_model` and synthetic generate
+      refuse honestly (D8). S6 measurement still unmet. `-api` remains deferred.
+
 ## Post-v1 parking
 
 **Training paths deferred with reasons** (charter §Deliberately out of v1)
