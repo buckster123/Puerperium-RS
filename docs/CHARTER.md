@@ -177,6 +177,13 @@ v1 ships the Stage-1 loop. Each gate is checkable, not aspirational.
 
 ## Amendments
 
+- **2026-08-16** — **`job download` is the missing link, and it shipped.** A finished
+  Together job is now `GET /v1/finetune/download?checkpoint=adapter` (never omit
+  `checkpoint` — the API default is `merged`), a `.tar.zst` extract with a path-escape
+  guard, and epoch-mean loss from `trainer_state.json`. Recovery via `--provider-job-id`
+  when there is no local record. No decision reversed; the 2026-08-03 serving amendment
+  is now implementable.
+
 - **2026-08-03** — **Together is a TRAINING provider only; serving happens on vast or local
   compute.** Their dedicated endpoints are priced for the hardware they run on (B200 / dual
   H100 class), which is absurd overkill for a small LoRA adapter. Parked until further notice.

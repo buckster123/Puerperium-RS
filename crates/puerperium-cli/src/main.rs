@@ -147,6 +147,19 @@ enum JobCmd {
         #[arg(long, default_value_t = 35.0)]
         params_b: f64,
     },
+    /// Pull a finished adapter home and read its loss curve. Free.
+    ///
+    /// Default checkpoint is `adapter` (the LoRA weights). Omitting it on Together's
+    /// wire would fetch `merged` — the full model — which is the wrong default here.
+    Download {
+        /// Local job id. The record must already be succeeded.
+        id: Option<String>,
+        /// Together `ft-…` id. Recovers a job that has no local record.
+        #[arg(long)]
+        provider_job_id: Option<String>,
+        #[arg(long, default_value = "adapter")]
+        checkpoint: String,
+    },
 }
 
 #[derive(Args)]
@@ -359,6 +372,11 @@ fn main() -> Result<()> {
         Command::Job(JobCmd::Status { id }) => job_status(&paths, &id),
         Command::Job(JobCmd::Cancel { id }) => job_cancel(&paths, &id),
         Command::Job(JobCmd::Upload { dataset }) => job_upload(&paths, &dataset),
+        Command::Job(JobCmd::Download {
+            id,
+            provider_job_id,
+            checkpoint,
+        }) => job_download(&paths, id, provider_job_id, &checkpoint),
         Command::Job(JobCmd::Quote {
             training_file_id,
             base_model,
@@ -739,6 +757,52 @@ fn job_status(paths: &Paths, id: &str) -> Result<()> {
     };
     println!("phase: {}", phase.as_str());
     print_json(&job::load(paths.root(), id)?)
+}
+
+fn job_download(
+    paths: &Paths,
+    id: Option<String>,
+    provider_job_id: Option<String>,
+    checkpoint: &str,
+) -> Result<()> {
+    let checkpoint = puerperium::provider::together::Checkpoint::parse(checkpoint)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    if checkpoint == puerperium::provider::together::Checkpoint::Merged {
+        eprintln!(
+            "note: `merged` is the full combined weights, not the 16 MB adapter. \
+             Serving on vast/local usually wants `--checkpoint adapter`."
+        );
+    }
+    let report = puerperium::download::fetch(
+        paths,
+        &together()?,
+        puerperium::download::Spec {
+            job_id: id,
+            provider_job_id,
+            checkpoint,
+        },
+    )?;
+    println!("archive   {}", report.archive.display());
+    println!("extracted {}", report.extracted_dir.display());
+    println!("bytes     {}", report.bytes);
+    println!("files     {}", report.files.len());
+    for f in report.files.iter().take(20) {
+        println!("  {f}");
+    }
+    if report.files.len() > 20 {
+        println!("  … {} more", report.files.len() - 20);
+    }
+    match &report.loss {
+        Some(curve) => {
+            println!("\nloss curve ({} training steps):", curve.steps);
+            for e in &curve.epoch_means {
+                println!("  epoch {}  mean {:.4}  (n={})", e.epoch, e.mean_loss, e.n);
+            }
+            println!("  {}", curve.caveat);
+        }
+        None => println!("\nno trainer_state.json in the archive — loss curve unavailable"),
+    }
+    Ok(())
 }
 
 fn job_cancel(paths: &Paths, id: &str) -> Result<()> {

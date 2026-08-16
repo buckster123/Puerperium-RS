@@ -50,6 +50,12 @@ it may be running; check before resubmitting"
     )]
     SubmitUnconfirmed { id: String, reason: String },
 
+    #[error("job {id} cannot be downloaded ({reason})")]
+    NotDownloadable { id: String, reason: String },
+
+    #[error("archive entry would escape the destination: {0}")]
+    UnsafeArchiveEntry(String),
+
     #[error("provider refused: {0}")]
     ProviderRefused(String),
 

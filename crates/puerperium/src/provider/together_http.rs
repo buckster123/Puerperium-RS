@@ -9,6 +9,7 @@
 //! > S6 *measurement* — a specialist beats its base on a real task — is still unmet, and
 //! > further paid submits remain André's explicit, counted act (D4/D8).
 
+use std::path::Path;
 use std::time::Duration;
 
 use crate::provider::{together, ProviderError, ProviderStatus, SubmitRequest, TrainingProvider};
@@ -251,6 +252,98 @@ impl TogetherClient {
             .send();
         together::parse_price_estimate(&read(resp)?)
     }
+}
+
+impl TogetherClient {
+    /// `GET /v1/finetune/download` → a `.tar.zst` written to `dest`.
+    ///
+    /// Free. Follows a redirect **without** the bearer token — a presigned URL is
+    /// the authorisation, and sending the key to third-party storage would leak it
+    /// (same rule as the upload PUT).
+    pub fn download_checkpoint_to(
+        &self,
+        ft_id: &str,
+        checkpoint: together::Checkpoint,
+        dest: &Path,
+    ) -> Result<String, ProviderError> {
+        let url = self.url(&together::download_path(ft_id, checkpoint));
+        let resp = self
+            .http
+            .get(&url)
+            .bearer_auth(&self.api_key)
+            .header(reqwest::header::ACCEPT, "application/octet-stream")
+            .send()
+            .map_err(|e| ProviderError::Unreachable(e.to_string()))?;
+
+        let status = resp.status();
+        if status.is_redirection() {
+            let loc = resp
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .ok_or_else(|| {
+                    ProviderError::Malformed("download redirect carried no Location".into())
+                })?
+                .to_string();
+            let filename = together::filename_from_disposition(
+                resp.headers()
+                    .get(reqwest::header::CONTENT_DISPOSITION)
+                    .and_then(|v| v.to_str().ok()),
+                checkpoint,
+            );
+            let body =
+                self.http.get(&loc).send().map_err(|e| {
+                    ProviderError::Unreachable(format!("following download URL: {e}"))
+                })?;
+            if !body.status().is_success() {
+                return Err(ProviderError::Rejected(format!(
+                    "HTTP {} fetching the archive",
+                    body.status()
+                )));
+            }
+            write_body(body, dest)?;
+            return Ok(filename);
+        }
+
+        if !status.is_success() {
+            let body = resp
+                .text()
+                .map_err(|e| ProviderError::Unreachable(e.to_string()))?;
+            return Err(match classify_http(status.as_u16(), &body) {
+                Err(e) => e,
+                Ok(_) => ProviderError::Rejected(format!("HTTP {status}: {}", body.trim())),
+            });
+        }
+
+        let filename = together::filename_from_disposition(
+            resp.headers()
+                .get(reqwest::header::CONTENT_DISPOSITION)
+                .and_then(|v| v.to_str().ok()),
+            checkpoint,
+        );
+        write_body(resp, dest)?;
+        Ok(filename)
+    }
+}
+
+fn write_body(mut resp: reqwest::blocking::Response, dest: &Path) -> Result<(), ProviderError> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            ProviderError::Unreachable(format!("creating {}: {e}", parent.display()))
+        })?;
+    }
+    let tmp = dest.with_extension("part");
+    {
+        let mut f = std::fs::File::create(&tmp)
+            .map_err(|e| ProviderError::Unreachable(format!("writing {}: {e}", tmp.display())))?;
+        std::io::copy(&mut resp, &mut f)
+            .map_err(|e| ProviderError::Unreachable(format!("writing {}: {e}", tmp.display())))?;
+        f.sync_all()
+            .map_err(|e| ProviderError::Unreachable(format!("syncing {}: {e}", tmp.display())))?;
+    }
+    std::fs::rename(&tmp, dest)
+        .map_err(|e| ProviderError::Unreachable(format!("renaming {}: {e}", dest.display())))?;
+    Ok(())
 }
 
 impl TrainingProvider for TogetherClient {

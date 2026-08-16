@@ -47,6 +47,7 @@
 pub mod apprentice;
 pub mod convert;
 pub mod dataset;
+pub mod download;
 pub mod engine;
 pub mod error;
 pub mod estimate;
