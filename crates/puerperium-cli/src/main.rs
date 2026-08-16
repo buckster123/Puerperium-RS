@@ -134,8 +134,9 @@ enum JobCmd {
     /// the real tokenizer and the minimum charge, which a local heuristic cannot.
     Quote {
         training_file_id: String,
-        #[arg(long, default_value = "Qwen/Qwen3.6-35B-A3B")]
-        base_model: String,
+        /// Fine-tune base. Defaults to $PUERPERIUM_DEFAULT_BASE, else Qwen/Qwen3.6-35B-A3B.
+        #[arg(long)]
+        base_model: Option<String>,
         #[arg(long, default_value_t = 3)]
         epochs: u32,
         #[arg(long, default_value_t = 16)]
@@ -156,8 +157,9 @@ struct SubmitArgs {
     /// Dataset name. Its hash is read from the sidecar and pinned into the record.
     #[arg(long)]
     dataset: String,
-    #[arg(long, default_value = "Qwen/Qwen3.6-27B")]
-    base_model: String,
+    /// Fine-tune base. Defaults to $PUERPERIUM_DEFAULT_BASE, else Qwen/Qwen3.6-35B-A3B.
+    #[arg(long)]
+    base_model: Option<String>,
     /// Name for the resulting adapter.
     #[arg(long)]
     output_name: String,
@@ -214,8 +216,8 @@ struct EstimateArgs {
     /// Dataset to price.
     #[arg(long)]
     dataset: String,
-    /// Base model size in billions of parameters (27 for Qwen3.6-27B).
-    #[arg(long, default_value_t = 27.0)]
+    /// Base model size in billions of parameters (35 for Qwen3.6-35B-A3B).
+    #[arg(long, default_value_t = 35.0)]
     params_b: f64,
     #[arg(long, default_value_t = 3)]
     epochs: u32,
@@ -366,7 +368,7 @@ fn main() -> Result<()> {
             params_b,
         }) => job_quote(
             &training_file_id,
-            &base_model,
+            &together_base(base_model),
             epochs,
             lora_r,
             lora_alpha,
@@ -603,6 +605,12 @@ fn together() -> Result<puerperium::provider::together_http::TogetherClient> {
     Ok(puerperium::provider::together_http::TogetherClient::from_env()?)
 }
 
+fn together_base(explicit: Option<String>) -> String {
+    explicit
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(puerperium::provider::together::default_base)
+}
+
 fn job_submit(paths: &Paths, args: SubmitArgs) -> Result<()> {
     let dataset = dataset::read_meta(&paths.datasets(), &args.dataset)
         .with_context(|| format!("dataset {:?} must exist to be trained on", args.dataset))?
@@ -618,21 +626,25 @@ fn job_submit(paths: &Paths, args: SubmitArgs) -> Result<()> {
         Some(name) => ComputeRef::Node { name: name.clone() },
         None => ComputeRef::Managed,
     };
+    let base_model = together_base(args.base_model);
 
     if args.dry_run {
         let req = puerperium::provider::SubmitRequest {
             training_file_id: args.training_file_id,
-            base_model: args.base_model,
+            base_model: base_model.clone(),
             output_name: args.output_name,
             method: Method::LoraSft,
             hyperparams,
         };
-        println!("would POST /v1/fine-tunes:");
+        println!("would POST /v1/fine-tunes (UNRESOLVED — not what submit sends):");
         println!(
             "{}",
             serde_json::to_string_pretty(&puerperium::provider::together::build_submit_body(&req))?
         );
-        println!("\ndry run — nothing written, no upstream contacted");
+        println!(
+            "\ndry run — nothing written, no upstream contacted. \
+             submit resolves batch_size / rank / modules against GET /v1/fine-tunes/models/limits first."
+        );
         return Ok(());
     }
 
@@ -644,7 +656,7 @@ fn job_submit(paths: &Paths, args: SubmitArgs) -> Result<()> {
         id: args.id,
         provider: Provider::Together,
         dataset,
-        base_model: args.base_model,
+        base_model,
         output_name: args.output_name,
         method: Method::LoraSft,
         hyperparams,
@@ -830,7 +842,10 @@ fn job_upload(paths: &Paths, dataset: &str) -> Result<()> {
 
     let client = together()?;
     let file_id = client.upload_jsonl(&format!("{dataset}.jsonl"), body.as_bytes())?;
+    let meta = dataset::read_meta(&paths.datasets(), dataset)?;
+    puerperium::upload::bind(paths, file_id.clone(), meta.dataset_ref(), body.as_bytes())?;
     println!("training_file_id: {file_id}");
+    println!("bound to {} ({})", meta.name, &meta.sha256[..12]);
     println!("\nnext: puerperium job submit --id <id> --dataset {dataset} \\");
     println!("        --output-name <name> --training-file-id {file_id}");
     Ok(())

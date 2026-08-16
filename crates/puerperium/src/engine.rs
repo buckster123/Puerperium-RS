@@ -76,6 +76,7 @@ pub fn submit(
     // The gate comes first: refuse before writing anything, so a job that cannot run leaves
     // no record implying it tried.
     check_compute(&spec.compute, available_compute)?;
+    crate::upload::assert_bound(paths, &spec.training_file_id, &spec.dataset)?;
 
     let dir = paths.root();
 
@@ -116,6 +117,7 @@ pub fn submit(
         submitted_at: Utc::now(),
         terminal: None,
         cancel_requested_at: None,
+        total_price_nanodollars: None,
         ledger_refs: vec![],
     };
 
@@ -211,6 +213,9 @@ pub fn refresh(
                     artifact: status.artifact,
                     error: status.error,
                 });
+                if status.total_price_nanodollars.is_some() {
+                    updated.total_price_nanodollars = status.total_price_nanodollars;
+                }
                 job::append(dir, &updated)?;
                 Ok((updated, phase))
             } else {
@@ -261,6 +266,20 @@ mod tests {
     fn paths() -> (tempfile::TempDir, Paths) {
         let dir = tempfile::tempdir().expect("tempdir");
         let p = Paths::new(dir.path());
+        // spec() always uses file-abc / apexos-knowledge@abc123.
+        crate::upload::save(
+            &p,
+            &crate::upload::FileBinding {
+                file_id: "file-abc".into(),
+                dataset: DatasetRef {
+                    name: "apexos-knowledge".into(),
+                    sha256: "abc123".into(),
+                },
+                projected_sha256: "abc123".into(),
+                uploaded_at: Utc::now(),
+            },
+        )
+        .expect("bind test file");
         (dir, p)
     }
 
@@ -292,6 +311,7 @@ mod tests {
                 artifact: Some("acct/worker-v1-adapter".into()),
                 error: None,
                 upstream_status: "completed".into(),
+                total_price_nanodollars: Some(4_000_000_000),
             }),
         ]);
 
@@ -307,6 +327,7 @@ mod tests {
         let t = rec.terminal.expect("terminal written");
         assert_eq!(t.outcome, Outcome::Succeeded);
         assert_eq!(t.artifact.as_deref(), Some("acct/worker-v1-adapter"));
+        assert_eq!(rec.total_price_nanodollars, Some(4_000_000_000));
     }
 
     /// INVARIANT 1: the record must exist even when the upstream never answers.
@@ -550,6 +571,24 @@ mod tests {
             2,
             "crash-row + recovered id; no extra blank snapshot"
         );
+    }
+
+    #[test]
+    fn an_unbound_training_file_refuses_without_writing_a_record() {
+        let (_d, p) = paths();
+        let mut s = spec("j1", ComputeRef::Managed);
+        s.training_file_id = "file-ghost".into();
+        let prov = Scripted::submitting("ft-1");
+        let err = submit(&p, &prov, s, &[]).expect_err("must refuse");
+        assert!(
+            matches!(err, Error::UnboundTrainingFile { .. }),
+            "got {err:?}"
+        );
+        assert!(
+            job::load_all(p.root()).expect("load").is_empty(),
+            "must not write a job for a file we cannot attribute"
+        );
+        assert_eq!(prov.submit_count(), 0);
     }
 
     #[test]

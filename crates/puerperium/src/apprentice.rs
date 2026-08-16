@@ -195,6 +195,7 @@ mod tests {
                 submitted_at: Utc::now(),
                 terminal: None,
                 cancel_requested_at: None,
+                total_price_nanodollars: None,
                 ledger_refs: vec![],
             },
         )

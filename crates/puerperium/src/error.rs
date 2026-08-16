@@ -22,6 +22,19 @@ pub enum Error {
     #[error("job {id} already exists ({reason}) — not resubmitted")]
     JobExists { id: String, reason: String },
 
+    #[error(
+        "training file {file_id} is not bound to a local dataset — \
+         upload via `job upload` so the hash is pinned"
+    )]
+    UnboundTrainingFile { file_id: String },
+
+    #[error("training file {file_id} was uploaded for dataset hash {bound}, not {requested}")]
+    TrainingFileMismatch {
+        file_id: String,
+        bound: String,
+        requested: String,
+    },
+
     #[error("no record named {name:?} in {dir}")]
     RecordNotFound { dir: PathBuf, name: String },
 

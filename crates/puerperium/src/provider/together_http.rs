@@ -48,6 +48,9 @@ impl TogetherClient {
     /// A missing key is [`ProviderError::NoKey`] naming the variable — "no key configured"
     /// beats a timeout, every time (doctrine #3).
     pub fn from_env() -> Result<Self, ProviderError> {
+        // Faces that skip the CLI still pick up ~/.config/puerperium/env. A real
+        // environment variable already set wins (secrets::load never overwrites).
+        let _ = crate::secrets::load();
         let api_key = std::env::var(API_KEY_ENV)
             .ok()
             .filter(|k| !k.trim().is_empty())
@@ -84,26 +87,31 @@ impl TogetherClient {
     }
 }
 
-/// Read a response into `(status, body)`, mapping transport failure to `Unreachable`.
+/// Classify an HTTP status + body.
 ///
-/// The distinction is load-bearing: transport failure means *we could not ask*, which is not
-/// a job failure, while an HTTP error status means *they answered and refused*.
+/// - 2xx → the body, for the caller to parse
+/// - 401/403 and other 4xx (except 408/429) → [`ProviderError::Rejected`] (they said no)
+/// - 408 / 429 / 5xx → [`ProviderError::Unreachable`] (we could not get a stable answer;
+///   a paid job may still be running — this must not become a local `Failed`)
+pub fn classify_http(status: u16, body: &str) -> Result<String, ProviderError> {
+    let msg = format!("HTTP {status}: {}", body.trim());
+    match status {
+        200..=299 => Ok(body.to_string()),
+        401 | 403 => Err(ProviderError::Rejected(msg)),
+        408 | 429 => Err(ProviderError::Unreachable(msg)),
+        400..=499 => Err(ProviderError::Rejected(msg)),
+        _ => Err(ProviderError::Unreachable(msg)),
+    }
+}
+
+/// Read a response, mapping transport failure to `Unreachable` and classifying the status.
 fn read(resp: reqwest::Result<reqwest::blocking::Response>) -> Result<String, ProviderError> {
     let resp = resp.map_err(|e| ProviderError::Unreachable(e.to_string()))?;
-    let status = resp.status();
+    let status = resp.status().as_u16();
     let body = resp
         .text()
         .map_err(|e| ProviderError::Unreachable(format!("could not read body: {e}")))?;
-
-    if status.is_success() {
-        Ok(body)
-    } else {
-        // Carry the upstream's own words — a bare status code costs the next session an hour.
-        Err(ProviderError::Rejected(format!(
-            "HTTP {status}: {}",
-            body.trim()
-        )))
-    }
+    classify_http(status, &body)
 }
 
 /// Header carrying the new file's id on the upload-URL response.
@@ -145,10 +153,13 @@ impl TogetherClient {
         let status = resp.status();
         if !(status.is_success() || status.is_redirection()) {
             let body = resp.text().unwrap_or_default();
-            return Err(ProviderError::Rejected(format!(
-                "HTTP {status} asking for an upload URL: {}",
-                body.trim()
-            )));
+            return Err(match classify_http(status.as_u16(), &body) {
+                Err(e) => e,
+                Ok(_) => ProviderError::Rejected(format!(
+                    "HTTP {status} asking for an upload URL: {}",
+                    body.trim()
+                )),
+            });
         }
 
         let header = |name: &str| -> Option<String> {
@@ -203,11 +214,11 @@ impl TogetherClient {
             .query(&[("model_name", model)])
             .send()
             .map_err(|e| ProviderError::Unreachable(e.to_string()))?;
-        // A refusal here carries a useful message in the BODY, so read it either way.
+        let status = resp.status().as_u16();
         let body = resp
             .text()
             .map_err(|e| ProviderError::Unreachable(e.to_string()))?;
-        together::parse_limits(&body)
+        together::parse_limits(&classify_http(status, &body)?)
     }
 }
 
@@ -248,7 +259,7 @@ impl TrainingProvider for TogetherClient {
         // "(Binding)" refusal into either a clean local fix or an honest "not fine-tunable".
         let limits = self.limits(&req.base_model)?;
         let resolved = SubmitRequest {
-            hyperparams: together::resolve(req.hyperparams.clone(), &limits),
+            hyperparams: together::resolve(req.hyperparams.clone(), &limits)?,
             ..req.clone()
         };
         let body = together::build_submit_body_with(&resolved, &limits.target_modules);
@@ -291,8 +302,11 @@ mod tests {
     /// Hermetic: constructs nothing that talks, only checks the no-key degrade and URL join.
     #[test]
     fn a_missing_key_is_named_not_a_timeout() {
-        // SAFETY-ish: single-threaded test, restores nothing it did not set.
-        let saved = std::env::var(API_KEY_ENV).ok();
+        // Isolate from ~/.config/puerperium/env — from_env now calls secrets::load().
+        let empty = tempfile::NamedTempFile::new().expect("tmp");
+        let saved_key = std::env::var(API_KEY_ENV).ok();
+        let saved_file = std::env::var("PUERPERIUM_ENV_FILE").ok();
+        std::env::set_var("PUERPERIUM_ENV_FILE", empty.path());
         std::env::remove_var(API_KEY_ENV);
 
         let err = TogetherClient::from_env().expect_err("must refuse without a key");
@@ -302,9 +316,34 @@ mod tests {
             "must name the variable"
         );
 
-        if let Some(v) = saved {
-            std::env::set_var(API_KEY_ENV, v);
+        match saved_key {
+            Some(v) => std::env::set_var(API_KEY_ENV, v),
+            None => std::env::remove_var(API_KEY_ENV),
         }
+        match saved_file {
+            Some(v) => std::env::set_var("PUERPERIUM_ENV_FILE", v),
+            None => std::env::remove_var("PUERPERIUM_ENV_FILE"),
+        }
+    }
+
+    #[test]
+    fn classify_http_keeps_retryable_statuses_non_terminal() {
+        for code in [408, 429, 500, 502, 503] {
+            let err = classify_http(code, "try again").expect_err("retryable");
+            assert!(
+                matches!(err, ProviderError::Unreachable(_)),
+                "{code} must not become Rejected: {err}"
+            );
+        }
+        assert!(matches!(
+            classify_http(400, "bad base").expect_err("4xx"),
+            ProviderError::Rejected(_)
+        ));
+        assert!(matches!(
+            classify_http(401, "no").expect_err("auth"),
+            ProviderError::Rejected(_)
+        ));
+        assert_eq!(classify_http(200, "ok").expect("2xx"), "ok");
     }
 
     /// Deriving `Debug` would leak the key the first time anything formatted the client.

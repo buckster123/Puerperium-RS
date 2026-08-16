@@ -62,5 +62,6 @@ pub mod router;
 pub mod secrets;
 pub mod source;
 pub mod store;
+pub mod upload;
 
 pub use error::{Error, Result};

@@ -66,6 +66,29 @@
   honest way to learn whether a base is fine-tunable at all — a model that is not answers with
   a `message` instead of limits. **Don't discover an unsupported base by submitting.**
 
+- **Never silently clamp a hyperparameter.** `resolve` used to `clamp` batch / rank / epochs
+  against the model's limits. House rule: never silently clamp what you can reject. An omitted
+  `batch_size` is filled with the published max (that is what `"max"` means). An explicit
+  value outside the range is `Rejected`, with the range in the reason.
+  **Don't put `.clamp()` back on the money path.**
+
+- **HTTP 429 / 5xx is Unreachable, not Rejected.** `read()` used to map every non-2xx onto
+  `Rejected`, and the engine writes `Terminal::Failed` for that. A rate-limit or trainer blip
+  on a live job would stop polling while Together kept billing. 408 / 429 / 5xx stay
+  non-terminal. Model-refusal 4xx and 401 stay Rejected.
+  **Don't treat a retryable status as a job outcome.**
+
+- **A `training_file_id` is bound to the dataset that was uploaded.** The job record names a
+  dataset by hash; Together trains on whatever file id we send. `job upload` writes
+  `uploads/<file-id>.json`; `submit` refuses an unbound or mismatched id. **Don't pass a
+  console-copied file id for a different dataset, and don't "fix" a mismatch by refreshing
+  the bind.**
+
+- **`--dry-run` prints a body that submit does not send.** `build_submit_body` still carries
+  `batch_size: "max"` and `all-linear`. Live submit resolves both against limits. Dry-run
+  contacts nothing, so it labels the JSON `UNRESOLVED — not what submit sends`.
+  **Don't present that JSON as the paid request.**
+
 - **`lora_trainable_modules: "all-linear"` is rejected by models that publish a specific list.**
   `Qwen/Qwen3.6-35B-A3B` accepts only `k_proj,o_proj,q_proj,v_proj`. Read `target_modules` from
   the limits call and send those. **Don't hard-code "all-linear".**
