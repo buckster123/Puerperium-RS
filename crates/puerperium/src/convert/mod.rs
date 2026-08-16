@@ -49,6 +49,10 @@ pub struct Converted {
     /// strong (heading-derived) / weak (tag-derived) ratio is visible without
     /// re-reading the JSONL.
     pub framing: BTreeMap<InstructionKind, usize>,
+    /// Unframeable is per-chunk. The rejection ledger counts the *memory* once
+    /// when nothing could be framed, so `memories_used + rejections.total()`
+    /// stays equal to the input length.
+    pub unframeable_chunks: usize,
 }
 
 /// Convert a batch of memories into training examples.
@@ -66,11 +70,12 @@ pub fn convert(memories: &[MemoryRecord], cfg: &ConvertConfig) -> Converted {
 
         let chunks = chunk::chunk(&mem.content, &cfg.chunk);
         let before = out.examples.len();
+        let mut unframeable = 0usize;
 
         for c in chunks {
             let Some((instruction, kind)) = instruct::instruction_for(&c, mem, &cfg.instruct)
             else {
-                out.rejections.record(Rejection::Unframeable);
+                unframeable += 1;
                 continue;
             };
 
@@ -87,8 +92,12 @@ pub fn convert(memories: &[MemoryRecord], cfg: &ConvertConfig) -> Converted {
             ));
         }
 
+        out.unframeable_chunks += unframeable;
         if out.examples.len() > before {
             out.memories_used += 1;
+        } else {
+            // The memory produced nothing teachable. Count it once, not once per chunk.
+            out.rejections.record(Rejection::Unframeable);
         }
     }
 
@@ -191,7 +200,43 @@ mod tests {
 
         assert!(got.examples.is_empty());
         assert_eq!(got.rejections.count_of(Rejection::Unframeable), 1);
+        assert_eq!(got.unframeable_chunks, 1);
         assert_eq!(got.memories_used, 0);
+        assert_eq!(got.memories_used + got.rejections.total(), 1);
+    }
+
+    #[test]
+    fn two_unframeable_chunks_count_as_one_memory() {
+        // First line ends with a period → no title → empty heading path → no tags
+        // → unframeable. A small max_chunk splits the two paragraphs into two chunks.
+        let p1 = "This is a plain paragraph of prose that ends in a period. It carries no \
+                  headings and the memory carries no tags, so nothing can frame it at all.";
+        let p2 = "A second paragraph of equally unframeable prose that also ends in a period. \
+                  Together they are long enough to split, and neither can become an example.";
+        let mut cfg = ConvertConfig::new();
+        cfg.chunk.max_chunk = 180;
+        let got = convert(
+            &[mem(
+                "m1",
+                &format!("{p1}\n\n{p2}"),
+                MemoryType::Semantic,
+                &[],
+            )],
+            &cfg,
+        );
+
+        assert!(got.examples.is_empty());
+        assert!(
+            got.unframeable_chunks >= 2,
+            "expected a split, got {} chunks",
+            got.unframeable_chunks
+        );
+        assert_eq!(
+            got.rejections.count_of(Rejection::Unframeable),
+            1,
+            "the memory is one rejection, not one per chunk"
+        );
+        assert_eq!(got.memories_used + got.rejections.total(), 1);
     }
 
     #[test]
