@@ -156,6 +156,26 @@
   own words. Collapsing the two either orphans spend or invents a failure that never happened.
   **Don't map a transport error onto a job outcome.**
 
+- **A reused job id orphans a paid run.** `jobs.jsonl` folds last-write-wins. A second
+  `submit` under an id that already has a `provider_job_id` (or a terminal) used to mint a
+  blank snapshot, call the provider again, and hide the live Together id. The first job keeps
+  billing with nothing local pointing at it. Crash-rows (id exists, neither set) retry in
+  place; anything else is `JobExists`. **Don't reuse a job id, and don't "fix" a live row by
+  submitting over it.**
+
+- **A schema bump that fails to default hides paid jobs.** `load_all` skips unparseable
+  lines so one bad append cannot make every job unreadable — and that skip used to be silent.
+  Adding a required field to `JobRecord` or `Hyperparams` would drop historical snapshots,
+  including ones with a live `provider_job_id`. New fields carry `#[serde(default)]`;
+  `job list` prints every skipped line. Regression:
+  `job::tests::snapshot_written_before_a_field_existed_still_loads`. **Don't add a job field
+  without a default, and don't treat a skip as success.**
+
+- **Cancel is an ask, not an outcome.** `cancel_requested_at` is a fact about *us*. Writing
+  local `Cancelled` would claim an upstream state we did not witness — the same D3 failure
+  as persisting `running`. The attempt is appended even when the provider refuses.
+  **Don't mark a job cancelled locally.**
+
 - **Check compute before building a provider.** The CLI evaluated `together()?` while
   assembling the call, so a missing `TOGETHER_API_KEY` surfaced *instead of* "that box does not
   exist" — the operator gets told to fix the wrong thing. `engine::check_compute` is public and
@@ -189,6 +209,16 @@
   to catch — the model was trained on data that is no longer there. `dataset_hash_mismatch`
   surfaces it. **Don't "fix" it by refreshing the recorded hash from disk; that destroys the
   only evidence that the provenance is broken.**
+
+- **`model add` does not overwrite.** Registry records are mutable for later facts
+  (`alias_requested`, artifact), but creating a second model under the same name used to
+  silently replace the first — lineage under that name would describe a different training
+  run. `add_model` is `AlreadyExists`; `save_model` stays the update path.
+  **Don't route the create verb through an overwrite.**
+
+- **Dataset reads validate the name before building a path.** Writes already refused
+  `../evil`; `read_meta` / `jsonl_path` / `verify` did not, so a crafted name escaped the
+  datasets directory. **Don't construct a dataset path from an unvalidated name.**
 
 - **A missing record is `RecordNotFound`, never a raw io error.** `dataset::read_meta` leaked
   an ENOENT chain to whoever referenced a deleted dataset, while `store::load` gave a clean

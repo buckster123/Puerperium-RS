@@ -6,6 +6,9 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::error::Result;
+use crate::store;
+
 /// Resolved state-directory layout.
 #[derive(Debug, Clone)]
 pub struct Paths {
@@ -31,6 +34,15 @@ impl Paths {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Create the layout and lock it to the owner (`0700` on Unix).
+    pub fn ensure(&self) -> Result<()> {
+        store::ensure_dir(&self.root)?;
+        store::ensure_dir(&self.datasets())?;
+        store::ensure_dir(&self.models())?;
+        store::ensure_dir(&self.apprentices())?;
+        Ok(())
     }
 
     pub fn datasets(&self) -> PathBuf {
@@ -62,5 +74,21 @@ mod tests {
         assert_eq!(p.models(), Path::new("/tmp/x/models"));
         assert_eq!(p.apprentices(), Path::new("/tmp/x/apprentices"));
         assert_eq!(p.model_artifacts("m1"), Path::new("/tmp/x/models/m1"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_locks_the_state_root() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = Paths::new(dir.path().join("state"));
+        p.ensure().expect("ensure");
+        let mode = std::fs::metadata(p.root())
+            .expect("meta")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700);
+        assert!(p.datasets().is_dir());
     }
 }

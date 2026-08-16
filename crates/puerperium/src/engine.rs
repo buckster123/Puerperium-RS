@@ -63,6 +63,10 @@ pub fn check_compute(compute: &ComputeRef, available: &[String]) -> Result<()> {
 ///
 /// `available_compute` is what Router already has — discovered, never created (D4). Ignored
 /// for [`ComputeRef::Managed`], which needs no box.
+///
+/// Job ids are unique once they have a `provider_job_id` or a terminal. A crash-row (the
+/// id exists, neither is set) is retried in place — last-write-wins must not mint a second
+/// paid run under the same id.
 pub fn submit(
     paths: &Paths,
     provider: &dyn TrainingProvider,
@@ -74,7 +78,31 @@ pub fn submit(
     check_compute(&spec.compute, available_compute)?;
 
     let dir = paths.root();
-    let mut record = JobRecord {
+
+    if let Ok(existing) = job::load(dir, &spec.id) {
+        if let Some(pid) = &existing.provider_job_id {
+            return Err(Error::JobExists {
+                id: spec.id,
+                reason: format!("provider id {pid} — resubmitting would orphan a paid run"),
+            });
+        }
+        if let Some(t) = &existing.terminal {
+            return Err(Error::JobExists {
+                id: spec.id,
+                reason: format!("already ended ({})", t.outcome.as_str()),
+            });
+        }
+        if !same_facts(&existing, &spec) {
+            return Err(Error::JobExists {
+                id: spec.id,
+                reason: "unconfirmed submit with different facts — retry the original spec or pick a new id".into(),
+            });
+        }
+        // Crash-row: the record is already the invariant-1 write. Retry, don't mint another.
+        return finish_submit(dir, existing, spec.training_file_id, provider);
+    }
+
+    let record = JobRecord {
         id: spec.id,
         provider: spec.provider,
         provider_job_id: None,
@@ -87,18 +115,38 @@ pub fn submit(
         compute: spec.compute,
         submitted_at: Utc::now(),
         terminal: None,
+        cancel_requested_at: None,
         ledger_refs: vec![],
     };
 
     // INVARIANT 1: on disk before the upstream is touched.
     job::append(dir, &record)?;
+    finish_submit(dir, record, spec.training_file_id, provider)
+}
 
+fn same_facts(existing: &JobRecord, spec: &SubmitSpec) -> bool {
+    existing.provider == spec.provider
+        && existing.dataset == spec.dataset
+        && existing.base_model == spec.base_model
+        && existing.output_name == spec.output_name
+        && existing.method == spec.method
+        && existing.hyperparams == spec.hyperparams
+        && existing.trainer_agent == spec.trainer_agent
+        && existing.compute == spec.compute
+}
+
+fn finish_submit(
+    dir: &std::path::Path,
+    mut record: JobRecord,
+    training_file_id: String,
+    provider: &dyn TrainingProvider,
+) -> Result<JobRecord> {
     let req = SubmitRequest {
-        training_file_id: spec.training_file_id,
-        base_model: spec.base_model,
-        output_name: spec.output_name,
-        method: spec.method,
-        hyperparams: spec.hyperparams,
+        training_file_id,
+        base_model: record.base_model.clone(),
+        output_name: record.output_name.clone(),
+        method: record.method,
+        hyperparams: record.hyperparams.clone(),
     };
 
     match provider.submit(&req) {
@@ -120,8 +168,8 @@ pub fn submit(
         }
         // INVARIANT 2: we could not ask, or could not understand the answer. The job may
         // exist upstream and may be billing — leaving it non-terminal keeps it recoverable.
+        // The crash-row is already on disk; do not append an identical blank snapshot.
         Err(e @ (ProviderError::Unreachable(_) | ProviderError::Malformed(_))) => {
-            job::append(dir, &record)?;
             Err(Error::SubmitUnconfirmed {
                 id: record.id,
                 reason: e.to_string(),
@@ -194,10 +242,15 @@ pub fn cancel(paths: &Paths, provider: &dyn TrainingProvider, id: &str) -> Resul
         });
     };
 
+    // The ask is a fact even when the upstream refuses it. Outcome stays unclaimed.
+    let mut updated = record;
+    updated.cancel_requested_at = Some(Utc::now());
+    job::append(dir, &updated)?;
+
     provider
         .cancel(&provider_job_id)
         .map_err(|e| Error::ProviderRefused(e.to_string()))?;
-    Ok(record)
+    Ok(updated)
 }
 
 #[cfg(test)]
@@ -421,6 +474,119 @@ mod tests {
             !rec.is_terminal(),
             "only an observed `cancelled` from the provider is terminal"
         );
+        assert!(
+            rec.cancel_requested_at.is_some(),
+            "the ask is a fact and must persist"
+        );
+        assert_eq!(
+            job::load(p.root(), "j1").expect("load").cancel_requested_at,
+            rec.cancel_requested_at
+        );
+    }
+
+    #[test]
+    fn a_second_submit_of_a_live_id_does_not_call_the_provider() {
+        let (_d, p) = paths();
+        let first = Scripted::submitting("ft-1");
+        submit(&p, &first, spec("j1", ComputeRef::Managed), &[]).expect("first");
+
+        let second = Scripted::submitting("ft-2");
+        let err =
+            submit(&p, &second, spec("j1", ComputeRef::Managed), &[]).expect_err("must refuse");
+        assert!(matches!(err, Error::JobExists { .. }), "got {err:?}");
+        assert!(
+            err.to_string().contains("ft-1"),
+            "the live id must be in the reason: {err}"
+        );
+        assert_eq!(
+            second.submit_count(),
+            0,
+            "must not contact the provider a second time"
+        );
+        assert_eq!(
+            job::load(p.root(), "j1")
+                .expect("load")
+                .provider_job_id
+                .as_deref(),
+            Some("ft-1"),
+            "the live id must not be overwritten"
+        );
+    }
+
+    #[test]
+    fn a_rejected_id_is_not_reused() {
+        let (_d, p) = paths();
+        let reject = Scripted::failing_to_submit("base model not supported");
+        submit(&p, &reject, spec("j1", ComputeRef::Managed), &[]).expect("rejected record");
+
+        let again = Scripted::submitting("ft-2");
+        let err =
+            submit(&p, &again, spec("j1", ComputeRef::Managed), &[]).expect_err("must refuse");
+        assert!(matches!(err, Error::JobExists { .. }), "got {err:?}");
+        assert_eq!(again.submit_count(), 0);
+        assert!(job::load(p.root(), "j1").expect("load").is_terminal());
+    }
+
+    #[test]
+    fn a_crash_row_retries_without_minting_a_blank_snapshot() {
+        let (_d, p) = paths();
+        let fail = Scripted {
+            submit_result: None,
+            ..Default::default()
+        };
+        let _ = submit(&p, &fail, spec("j1", ComputeRef::Managed), &[]);
+        let crash = job::load(p.root(), "j1").expect("crash-row");
+        assert!(crash.provider_job_id.is_none());
+        assert!(!crash.is_terminal());
+
+        let ok = Scripted::submitting("ft-recovered");
+        let rec = submit(&p, &ok, spec("j1", ComputeRef::Managed), &[]).expect("retry");
+        assert_eq!(rec.provider_job_id.as_deref(), Some("ft-recovered"));
+        assert_eq!(ok.submit_count(), 1);
+
+        let text = std::fs::read_to_string(job::log_path(p.root())).expect("read log");
+        assert_eq!(
+            text.lines().count(),
+            2,
+            "crash-row + recovered id; no extra blank snapshot"
+        );
+    }
+
+    #[test]
+    fn a_crash_row_with_different_facts_is_refused() {
+        let (_d, p) = paths();
+        let fail = Scripted {
+            submit_result: None,
+            ..Default::default()
+        };
+        let _ = submit(&p, &fail, spec("j1", ComputeRef::Managed), &[]);
+
+        let mut other = spec("j1", ComputeRef::Managed);
+        other.output_name = "someone-else".into();
+        let again = Scripted::submitting("ft-2");
+        let err = submit(&p, &again, other, &[]).expect_err("must refuse");
+        assert!(err.to_string().contains("different facts"), "got {err}");
+        assert_eq!(again.submit_count(), 0);
+    }
+
+    #[test]
+    fn a_refused_cancel_still_records_the_ask() {
+        let (_d, p) = paths();
+        let submitter = Scripted::submitting("ft-1");
+        submit(&p, &submitter, spec("j1", ComputeRef::Managed), &[]).expect("submit");
+
+        let refuser = Scripted {
+            cancel_result: Some(Err("upstream said no".into())),
+            ..Default::default()
+        };
+        let err = cancel(&p, &refuser, "j1").expect_err("must surface the refuse");
+        assert!(err.to_string().contains("upstream said no"), "got {err}");
+        let rec = job::load(p.root(), "j1").expect("load");
+        assert!(
+            rec.cancel_requested_at.is_some(),
+            "the ask is a fact even when they refuse"
+        );
+        assert!(!rec.is_terminal());
     }
 
     #[test]

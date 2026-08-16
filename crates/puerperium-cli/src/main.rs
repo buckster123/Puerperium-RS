@@ -327,6 +327,7 @@ fn main() -> Result<()> {
         None => Paths::from_env()
             .context("no state dir: set $PUERPERIUM_STATE_DIR or $HOME, or pass --state-dir")?,
     };
+    paths.ensure()?;
 
     match cli.command {
         Command::Data(DataCmd::Generate(args)) => generate(&paths, args),
@@ -442,7 +443,7 @@ fn generate(paths: &Paths, args: GenerateArgs) -> Result<()> {
 
     println!(
         "\nwrote {}",
-        dataset::jsonl_path(&paths.datasets(), &meta.name).display()
+        dataset::jsonl_path(&paths.datasets(), &meta.name)?.display()
     );
     println!("sha256 {}", meta.sha256);
     Ok(())
@@ -472,7 +473,7 @@ fn data_inspect(paths: &Paths, name: &str, head: usize) -> Result<()> {
     let meta = dataset::read_meta(&paths.datasets(), name)?;
     print_json(&meta)?;
 
-    let path = dataset::jsonl_path(&paths.datasets(), name);
+    let path = dataset::jsonl_path(&paths.datasets(), name)?;
     let text =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     println!("\n--- first {head} examples ---");
@@ -518,7 +519,7 @@ fn model_add(paths: &Paths, args: ModelAddArgs) -> Result<()> {
         parent: args.parent,
         ..ModelRecord::new(&args.name, &args.base_model, &args.trainer_agent)
     };
-    registry::save_model(paths, &record)?;
+    registry::add_model(paths, &record)?;
     print_json(&record)
 }
 
@@ -653,25 +654,33 @@ fn job_submit(paths: &Paths, args: SubmitArgs) -> Result<()> {
     };
 
     let record = engine::submit(paths, &together()?, spec, &args.available_compute)?;
-    print_json(&record)
+    print_json(&record)?;
+    if let Some(t) = &record.terminal {
+        anyhow::bail!(
+            "submit rejected: {}",
+            t.error.as_deref().unwrap_or(t.outcome.as_str())
+        );
+    }
+    Ok(())
 }
 
 fn job_list(paths: &Paths) -> Result<()> {
-    let all = job::load_all(paths.root())?;
-    if all.is_empty() {
+    let log = job::load_log(paths.root())?;
+    if log.jobs.is_empty() && log.skipped.is_empty() {
         println!("no jobs in {}", job::log_path(paths.root()).display());
         return Ok(());
     }
 
     // Poll non-terminal jobs, but only build a client if one is actually needed — listing
     // must not demand a key just to show finished work.
-    let live = all
+    let live = log
+        .jobs
         .iter()
         .any(|j| !j.is_terminal() && j.provider_job_id.is_some())
         .then(together)
         .transpose();
 
-    for j in &all {
+    for j in &log.jobs {
         let phase = match (j.terminal_phase(), &live) {
             (Some(p), _) => p,
             (None, Ok(Some(client))) => engine::refresh(paths, client, &j.id)
@@ -691,6 +700,15 @@ fn job_list(paths: &Paths) -> Result<()> {
     }
     if let Err(e) = &live {
         println!("\n(non-terminal jobs shown as unknown: {e})");
+    }
+    if !log.skipped.is_empty() {
+        eprintln!(
+            "\n{} unreadable job snapshot(s) skipped — a schema bump must not hide a paid run:",
+            log.skipped.len()
+        );
+        for s in &log.skipped {
+            eprintln!("  line {}: {}", s.line, s.reason);
+        }
     }
     Ok(())
 }
@@ -718,7 +736,7 @@ fn job_cancel(paths: &Paths, id: &str) -> Result<()> {
 }
 
 fn estimate_cost(paths: &Paths, args: EstimateArgs) -> Result<()> {
-    let path = dataset::jsonl_path(&paths.datasets(), &args.dataset);
+    let path = dataset::jsonl_path(&paths.datasets(), &args.dataset)?;
     let chars = std::fs::metadata(&path)
         .with_context(|| format!("reading {}", path.display()))?
         .len();
@@ -775,7 +793,7 @@ fn keys(loaded: &puerperium::secrets::Loaded) -> Result<()> {
 
 /// Read a stored dataset and project it to the provider's schema.
 fn provider_bytes(paths: &Paths, name: &str) -> Result<String> {
-    let path = dataset::jsonl_path(&paths.datasets(), name);
+    let path = dataset::jsonl_path(&paths.datasets(), name)?;
     let stored =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     Ok(puerperium::export::to_provider_jsonl(

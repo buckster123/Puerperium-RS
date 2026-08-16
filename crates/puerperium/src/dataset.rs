@@ -76,12 +76,14 @@ impl DatasetMeta {
     }
 }
 
-pub fn jsonl_path(dir: &Path, name: &str) -> PathBuf {
-    dir.join(format!("{name}.jsonl"))
+pub fn jsonl_path(dir: &Path, name: &str) -> Result<PathBuf> {
+    store::validate_name(name)?;
+    Ok(dir.join(format!("{name}.jsonl")))
 }
 
-pub fn meta_path(dir: &Path, name: &str) -> PathBuf {
-    dir.join(format!("{name}.meta.json"))
+pub fn meta_path(dir: &Path, name: &str) -> Result<PathBuf> {
+    store::validate_name(name)?;
+    Ok(dir.join(format!("{name}.meta.json")))
 }
 
 /// Write a dataset and its sidecar. Returns the hash-bearing handle.
@@ -95,20 +97,18 @@ pub fn write(
     converted: &Converted,
     source: SourceSpec,
 ) -> Result<DatasetMeta> {
-    store::validate_name(name)?;
-
     if converted.examples.is_empty() {
         return Err(Error::NoExamples {
             rejected: converted.rejections.total(),
         });
     }
 
-    let data_path = jsonl_path(dir, name);
+    let data_path = jsonl_path(dir, name)?;
     if data_path.exists() {
         return Err(Error::DatasetExists(data_path));
     }
 
-    fs::create_dir_all(dir).map_err(|e| Error::io(dir, e))?;
+    store::ensure_dir(dir)?;
 
     // Build the whole body first so the hash covers exactly the bytes that land on disk.
     let mut body = String::new();
@@ -143,7 +143,7 @@ pub fn write(
     };
 
     let meta_json = serde_json::to_vec_pretty(&meta)?;
-    store::write_atomic(&meta_path(dir, name), &meta_json)?;
+    store::write_atomic(&meta_path(dir, name)?, &meta_json)?;
 
     Ok(meta)
 }
@@ -154,7 +154,7 @@ pub fn write(
 /// `store::load` gives, so "there is no dataset called that" reads the same everywhere
 /// instead of leaking an ENOENT chain at the caller.
 pub fn read_meta(dir: &Path, name: &str) -> Result<DatasetMeta> {
-    let p = meta_path(dir, name);
+    let p = meta_path(dir, name)?;
     let bytes = match fs::read(&p) {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -179,7 +179,7 @@ pub fn list(dir: &Path) -> Result<Vec<DatasetMeta>> {
 /// Verify a dataset's bytes still hash to what its sidecar claims.
 pub fn verify(dir: &Path, name: &str) -> Result<bool> {
     let meta = read_meta(dir, name)?;
-    let p = jsonl_path(dir, name);
+    let p = jsonl_path(dir, name)?;
     let bytes = fs::read(&p).map_err(|e| Error::io(&p, e))?;
     Ok(hex(Sha256::digest(&bytes).as_slice()) == meta.sha256)
 }
@@ -228,7 +228,7 @@ mod tests {
         assert_eq!(meta.sha256.len(), 64);
         assert!(verify(dir.path(), "d1").expect("verify"));
 
-        let text = fs::read_to_string(jsonl_path(dir.path(), "d1")).expect("read");
+        let text = fs::read_to_string(jsonl_path(dir.path(), "d1").expect("path")).expect("read");
         assert_eq!(text.lines().count(), 1);
         assert!(text.ends_with('\n'), "JSONL must be newline-terminated");
     }
@@ -277,6 +277,14 @@ mod tests {
         for bad in ["", "../evil", "a/b", ".hidden", "a\\b"] {
             let err = write(dir.path(), bad, &sample(), source()).expect_err("must reject");
             assert!(matches!(err, Error::InvalidName(_)), "{bad:?} gave {err:?}");
+            assert!(
+                matches!(read_meta(dir.path(), bad), Err(Error::InvalidName(_))),
+                "reads must refuse {bad:?} before touching the filesystem"
+            );
+            assert!(
+                matches!(jsonl_path(dir.path(), bad), Err(Error::InvalidName(_))),
+                "path construction must refuse {bad:?}"
+            );
         }
     }
 
@@ -298,7 +306,8 @@ mod tests {
             "tool_version": "0.1.0",
             "created_at": "2026-08-02T00:00:00Z"
         }"#;
-        fs::write(meta_path(dir.path(), "legacy"), old).expect("write legacy sidecar");
+        fs::write(meta_path(dir.path(), "legacy").expect("path"), old)
+            .expect("write legacy sidecar");
 
         let meta = read_meta(dir.path(), "legacy").expect("legacy sidecar must still load");
         assert_eq!(meta.example_count, 3);

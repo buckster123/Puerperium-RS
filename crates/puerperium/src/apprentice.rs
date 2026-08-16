@@ -18,6 +18,7 @@ use chrono::Utc;
 use crate::convert::{convert, ConvertConfig, Converted};
 use crate::dataset::{self, SourceSpec};
 use crate::error::{Error, Result};
+use crate::job;
 use crate::memory::MemoryRecord;
 use crate::paths::Paths;
 use crate::registry::{self, ApprenticeRecord};
@@ -108,6 +109,9 @@ pub fn create(
 
 /// Record that a training job was started for this apprentice.
 pub fn attach_job(paths: &Paths, id: &str, job_id: &str) -> Result<ApprenticeRecord> {
+    // Refuse a dangling job the same way attach_model refuses a missing model —
+    // lineage that points at work that never happened is a lie.
+    job::load(paths.root(), job_id)?;
     let mut record = registry::load_apprentice(paths, id)?;
     record.job_id = Some(job_id.to_string());
     registry::save_apprentice(paths, &record)?;
@@ -134,6 +138,8 @@ pub fn attach_model(paths: &Paths, id: &str, model_name: &str) -> Result<Apprent
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dataset::DatasetRef;
+    use crate::job::{self, ComputeRef, Hyperparams, JobRecord, Method, Provider};
     use crate::memory::MemoryType;
     use crate::registry::ModelRecord;
 
@@ -167,6 +173,32 @@ mod tests {
             agent_id: Some("FORGE".into()),
             salience: 0.9,
         }]
+    }
+
+    fn write_job(p: &Paths, id: &str) {
+        job::append(
+            p.root(),
+            &JobRecord {
+                id: id.into(),
+                provider: Provider::Together,
+                provider_job_id: Some("ft-1".into()),
+                dataset: DatasetRef {
+                    name: "d".into(),
+                    sha256: "abc".into(),
+                },
+                base_model: "Qwen/Qwen3.6-35B-A3B".into(),
+                output_name: "worker-v1".into(),
+                method: Method::LoraSft,
+                hyperparams: Hyperparams::default(),
+                trainer_agent: "FORGE".into(),
+                compute: ComputeRef::Managed,
+                submitted_at: Utc::now(),
+                terminal: None,
+                cancel_requested_at: None,
+                ledger_refs: vec![],
+            },
+        )
+        .expect("write job");
     }
 
     #[test]
@@ -270,6 +302,7 @@ mod tests {
         )
         .expect("create");
 
+        write_job(&p, "j1");
         let with_job = attach_job(&p, "ap1", "j1").expect("attach job");
         assert_eq!(with_job.job_id.as_deref(), Some("j1"));
         assert!(!with_job.is_trained(), "a job is not yet a model");
@@ -282,6 +315,24 @@ mod tests {
         let trained = attach_model(&p, "ap1", "worker-v1").expect("attach model");
         assert!(trained.is_trained());
         assert_eq!(trained.model.as_deref(), Some("worker-v1"));
+    }
+
+    #[test]
+    fn attaching_a_job_that_is_not_recorded_is_refused() {
+        let (_d, p) = paths();
+        create(
+            &p,
+            spec("ap1", "ap1-data"),
+            &memories(),
+            &ConvertConfig::new(),
+        )
+        .expect("create");
+        let err = attach_job(&p, "ap1", "ghost").expect_err("must refuse");
+        assert!(matches!(err, Error::RecordNotFound { .. }), "got {err:?}");
+        assert!(registry::load_apprentice(&p, "ap1")
+            .expect("load")
+            .job_id
+            .is_none());
     }
 
     /// A dangling model reference breaks the lineage walk at the generation being asked about.
