@@ -62,6 +62,10 @@ pub struct DatasetMeta {
     /// registry, so *every* field added here has to be back-compatible or old lineage breaks.
     #[serde(default)]
     pub framing: BTreeMap<String, usize>,
+    /// Per-chunk unframeable count. Distinct from `rejections.unframeable`, which
+    /// is per-memory so the accounting stays total.
+    #[serde(default)]
+    pub unframeable_chunks: usize,
     pub source: SourceSpec,
     pub tool_version: String,
     pub created_at: DateTime<Utc>,
@@ -137,6 +141,7 @@ pub fn write(
             .iter()
             .map(|(k, v)| (k.as_str().to_string(), *v))
             .collect(),
+        unframeable_chunks: converted.unframeable_chunks,
         source,
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
         created_at: Utc::now(),
@@ -312,6 +317,7 @@ mod tests {
         let meta = read_meta(dir.path(), "legacy").expect("legacy sidecar must still load");
         assert_eq!(meta.example_count, 3);
         assert!(meta.framing.is_empty());
+        assert_eq!(meta.unframeable_chunks, 0);
         assert_eq!(list(dir.path()).expect("list").len(), 1);
     }
 

@@ -100,6 +100,10 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
 
 **Next up — the gap the first real run exposed**
 
+- [x] **convert Unframeable accounting** (2026-08-16) — a memory that splits into N
+      unframeable chunks is one rejection, not N. `unframeable_chunks` is the chunk
+      tally; `memories_used + rejections.total()` equals the input length again.
+
 - [x] **`job download`** (2026-08-16) — `GET /v1/finetune/download?checkpoint=adapter`
       (never omit checkpoint — the API default is `merged`). Writes `.tar.zst`, extracts
       with a path-escape guard, reads `trainer_state.json` epoch means. Recovery via

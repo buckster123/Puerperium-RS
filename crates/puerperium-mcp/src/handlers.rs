@@ -677,6 +677,7 @@ fn convert_summary(out: &Converted, memories_in: usize) -> Value {
         "examples": out.examples.len(),
         "rejected": out.rejections.total(),
         "rejections": out.rejections.counts(),
+        "unframeable_chunks": out.unframeable_chunks,
         "framing": framing,
     })
 }

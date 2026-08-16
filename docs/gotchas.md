@@ -24,6 +24,14 @@
   path guard writes wherever the archive points. **Don't gunzip it, and don't extract
   an entry whose path leaves the destination.**
 
+- **Unframeable is per-chunk; the rejection ledger is per-memory.** A long memory
+  can split into several chunks that each fail to frame. Counting each one as a
+  rejection made `memories_used + rejections.total()` exceed the input length, so
+  the "nothing vanishes" invariant lied. The ledger records `Unframeable` once
+  when a memory produces no examples; `unframeable_chunks` is the chunk tally.
+  **Don't add a chunk-level count into the memory ledger, and don't add a
+  sidecar field without `#[serde(default)]`.**
+
 - **MCP stdout is sacred.** `puerperium-mcp` speaks newline-delimited JSON-RPC on stdout.
   All `tracing` goes to **stderr**. A stray `println!` (or anything else that writes a
   non-JSON line to stdout) corrupts the stream and the client sees a parse error that
