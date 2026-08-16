@@ -31,13 +31,15 @@ fn tool_schema(name: &str) -> Value {
     match name {
         "nursery_generate_data" => json!({
             "name": name,
-            "description": "Build an instruction dataset from a Cerebro snapshot (--db) or a memories JSON export (--from). Writes JSONL + sidecar, hashes the file. dry_run (default true) reports the conversion and writes nothing. Synthetic templates are not built — that path refuses honestly.",
+            "description": "Build an instruction dataset from a Cerebro snapshot (db), a memories JSON export (from), or a copied ApexOS session export (sessions). Writes JSONL + sidecar, hashes the file. dry_run (default true) reports the conversion and writes nothing. Synthetic templates are not built — that path refuses honestly.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "name": { "type": "string", "description": "Dataset name. Immutable once written." },
                     "db": { "type": "string", "description": "Cerebro snapshot path. Opened read-only; prefer a .backup, not a live db." },
                     "from": { "type": "string", "description": "Path to a JSON array of MemoryRecord (Cerebro export)." },
+                    "sessions": { "type": "string", "description": "Directory of exported session-*.jsonl. Never a live AGENTD_LOG (D13)." },
+                    "node": { "type": "string", "description": "Node id stamped on session-turn provenance. Defaults to the directory name." },
                     "agent_id": { "type": "string", "description": "Whose memory space to mine when using db. Not the trainer (D6)." },
                     "tags": { "type": "array", "items": { "type": "string" }, "description": "Keep memories carrying any of these tags." },
                     "limit": { "type": "integer", "description": "Cap memories, highest salience first." },

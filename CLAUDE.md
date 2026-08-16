@@ -9,7 +9,7 @@
 Bootstrapped 2026-08-02. House conventions come from `~/Projects/Launchpad-RS/`
 — load a doc from there when you need the detail behind a rule below.
 
-**Read `docs/CHARTER.md` before any non-trivial change — its decisions log (D1–D12) is
+**Read `docs/CHARTER.md` before any non-trivial change — its decisions log (D1–D13) is
 binding.** Amend it with a dated entry when a decision changes, never silently. Where the
 charter and this file disagree, the charter wins.
 
@@ -39,8 +39,9 @@ crates/
   puerperium/         # core lib — datasets, jobs, registry, lineage. No I/O glue.
   puerperium-cli/     # clap CLI — the human/ops face
   puerperium-mcp/     # MCP stdio server — the agent face (nursery_* tools)
-docs/CHARTER.md       # binding decisions D1–D12, phases, scope fence
+docs/CHARTER.md       # binding decisions D1–D13, phases, scope fence
 docs/design.md        # THE contract — tool surface, types, lifecycle
+docs/harvest.md       # session JSONL / traces / RAG — design freeze (D13)
 docs/rebirth.md       # Stage 2 design freeze (R0) — no code ships from this
 docs/drafts/          # Grok's originating brainstorm — provenance, superseded
 BACKLOG.md            # slice ledger S0–S6 + post-v1 parking
@@ -50,7 +51,7 @@ BACKLOG.md            # slice ledger S0–S6 + post-v1 parking
 
 ## Locked decisions
 
-The load-bearing summary; **`docs/CHARTER.md` D1–D12 is the binding long form.**
+The load-bearing summary; **`docs/CHARTER.md` D1–D13 is the binding long form.**
 **Locked means locked — do not re-litigate these mid-session; amend deliberately, with a date.**
 
 - **Language**: Rust — one Cargo workspace, every binary in it
@@ -69,6 +70,7 @@ The load-bearing summary; **`docs/CHARTER.md` D1–D12 is the binding long form.
 - **HTTP**: `reqwest` (rustls) out; `clap` for CLI; `serde` everywhere
 - **CI from commit 0**: fmt `--check` + clippy `-D warnings` + test + build
 - **rustfmt-clean baseline from commit 0** — so `cargo fmt --all` is always safe here
+- **Harvest is a snapshot, never a Cerebro dump** (D13) — long form `docs/harvest.md`
 
 ---
 
@@ -144,6 +146,7 @@ cargo build --release --workspace
 # Dataset garden (S1). Cerebro snapshot (`--db`, read-only) or a memories JSON export (`--from`).
 ./target/release/puerperium data generate --db /tmp/snap.db --agent FORGE --name my-set --domain ApexOS --dry-run
 ./target/release/puerperium data generate --from memories.json --name my-set --domain ApexOS
+./target/release/puerperium data generate --sessions /tmp/exports --node apex1 --name apex1-turns --dry-run
 ./target/release/puerperium data list
 ./target/release/puerperium data inspect my-set --head 5
 ./target/release/puerperium data verify my-set
@@ -226,8 +229,9 @@ Load only the relevant doc when entering a subsystem — do not load all of them
 
 | File | Load when working on |
 |------|----------------------|
-| `docs/CHARTER.md` | **Binding decisions D1–D12, phases, scope fence — before non-trivial work** |
+| `docs/CHARTER.md` | **Binding decisions D1–D13, phases, scope fence — before non-trivial work** |
 | `docs/design.md` | **The contract** — tool surface, types, job lifecycle, env |
+| `docs/harvest.md` | Session JSONL harvest, license classes, RAG sketch (D13) — before any mine of traces |
 | `docs/gotchas.md` | **Any subsystem change — grep it first** |
 | `docs/rebirth.md` | Stage 2 (full weight rewrite) — design freeze only, no code |
 | `docs/drafts/` | Originating brainstorm (Grok) — provenance; superseded by the charter |

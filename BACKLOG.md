@@ -91,10 +91,13 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
   `recall`/`find_by_tags` for targeted) would let it mine a *remote* Cerebro without a file
   copy; mirrors Prefrontal-RS's `core/cortex.rs` stdio-client pattern. Not needed until
   something wants to mine over the wire.
-- **Episode → trajectory examples** — episodes carry ordered steps, which is the closest thing
-  in the store to a real tool-use trajectory. Different converter, likely the highest-value
-  data for a *worker* model. Excluded from S1 because episodic-as-prose is narrative; episodic-
-  as-steps is not the same thing and deserves its own design.
+- **Session JSONL → trajectory examples** (D13 / `docs/harvest.md`, designed 2026-08-16,
+  not built). ApexOS `sessions/<id>.jsonl` is the real tool-use sequence; Cerebro
+  episodes stay narrative stubs. Converter is a new path next to `convert/` (round
+  split, license strip, secret scan, `Provenance::SessionTurn`).
+  `nursery_generate_data` gains exclusive `sessions` beside `db` / `from`. No new
+  MCP verb. Do not dump traces into Cerebro. Sibling taps (OAI `reasoning_content`
+  persist, session RAG index, Router `capture_bodies`) are those repos' threads.
 - **Near-duplicate collapse** — Cerebro reinforces rather than re-mints at ≥0.86 cosine, but a
   dataset mined across months can still carry restatements of one lesson.
 
@@ -120,8 +123,26 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
       with a path-escape guard, reads `trainer_state.json` epoch means. Recovery via
       `--provider-job-id` when there is no local record. Free. MCP: `nursery_download`.
 - **A healthy dataset** — 231 examples was a PoC. More *lived* material (not more epochs, not
-  dream-derived) is what the final S6 run needs. And with a minimum charge dominating, one
-  larger run costs the same as several small ones.
+  dream-derived) is what the final S6 run needs. The source for that material is
+  session JSONL (`docs/harvest.md`), not another pass over the laptop FORGE mine.
+  And with a minimum charge dominating, one larger run costs the same as several
+  small ones.
+
+**Harvest follow-ups** (D13 designed 2026-08-16; no code)
+
+- [x] **Puerperium: `session_jsonl` source + trajectory converter + secret scan**
+      (2026-08-16) — `puerperium::harvest`, `--sessions` / MCP `sessions`,
+      `Provenance::SessionTurn`, secret scan before write. Live `AGENTD_LOG`
+      refused. Open-reasoning allowlist still empty (verify ToS on first mine).
+- **ApexOS: persist OAI `reasoning_content`** — sibling thread, **not needed
+  for LoRA**. Today's Qwen thinking dies in `oai.rs`; that is fine for S6.
+  Revisit if Stage 2 wants the thinking channel. Empty signature = not
+  Anthropic-replay; do not send thinking back on the OAI path.
+- **ApexOS: session RAG index** — sibling thread. Own index under `AGENTD_LOG`;
+  Cerebro embed as a service, never `remember`. Query other sessions at turn start.
+- **ApexRouter: wire `capture_bodies`** — sibling thread, and only after *their*
+  charter amendment. Dead knob today (F037). For non-ApexOS clients; ApexOS
+  already has a better store.
 
 **S3 follow-ups**
 

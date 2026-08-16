@@ -127,8 +127,9 @@ provisioned, and exposes `nursery_*` tools over MCP.
 
 | File | What's in it |
 |------|--------------|
-| [`docs/CHARTER.md`](docs/CHARTER.md) | Binding decisions D1–D12, phases, the scope fence |
+| [`docs/CHARTER.md`](docs/CHARTER.md) | Binding decisions D1–D13, phases, the scope fence |
 | [`docs/design.md`](docs/design.md) | The contract — tool surface, types, job lifecycle |
+| [`docs/harvest.md`](docs/harvest.md) | Session JSONL harvest, license classes, RAG sketch (D13) |
 | [`docs/gotchas.md`](docs/gotchas.md) | Invariants, each written after something broke |
 | [`docs/rebirth.md`](docs/rebirth.md) | Stage 2 — the weight-rewrite path, design-frozen |
 | [`BACKLOG.md`](BACKLOG.md) | Slice ledger — shipped, deferred, and why |

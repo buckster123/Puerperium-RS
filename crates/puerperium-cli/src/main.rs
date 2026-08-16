@@ -63,8 +63,8 @@ enum Command {
 
 #[derive(Subcommand)]
 enum DataCmd {
-    /// Build a dataset from a Cerebro snapshot or a memories JSON export.
-    Generate(GenerateArgs),
+    /// Build a dataset from a Cerebro snapshot, a memories JSON export, or session JSONL.
+    Generate(Box<GenerateArgs>),
     /// List datasets, newest first.
     List,
     /// Show a dataset's metadata and its first examples.
@@ -289,6 +289,12 @@ struct GenerateArgs {
     /// Cerebro snapshot to mine. Opened READ-ONLY; prefer a `.backup` over a live file.
     #[arg(long)]
     db: Option<PathBuf>,
+    /// Copied ApexOS session export (`session-*.jsonl`). Never a live AGENTD_LOG (D13).
+    #[arg(long)]
+    sessions: Option<PathBuf>,
+    /// Node id stamped on session-turn provenance. Defaults to the directory name.
+    #[arg(long)]
+    node: Option<String>,
     /// Whose memory space to mine when using `--db`. Not the trainer (charter D6).
     #[arg(long)]
     agent: Option<String>,
@@ -360,7 +366,7 @@ fn main() -> Result<()> {
     paths.ensure()?;
 
     match cli.command {
-        Command::Data(DataCmd::Generate(args)) => generate(&paths, args),
+        Command::Data(DataCmd::Generate(args)) => generate(&paths, *args),
         Command::Data(DataCmd::List) => data_list(&paths),
         Command::Data(DataCmd::Inspect { name, head }) => data_inspect(&paths, &name, head),
         Command::Data(DataCmd::Verify { name }) => data_verify(&paths, &name),
@@ -426,10 +432,22 @@ fn parse_type(s: &str) -> Result<MemoryType> {
 }
 
 fn generate(paths: &Paths, args: GenerateArgs) -> Result<()> {
+    let n = [
+        args.from.is_some(),
+        args.db.is_some(),
+        args.sessions.is_some(),
+    ]
+    .into_iter()
+    .filter(|x| *x)
+    .count();
     anyhow::ensure!(
-        args.from.is_some() ^ args.db.is_some(),
-        "give --from (memories JSON) or --db (Cerebro snapshot), not both and not neither"
+        n == 1,
+        "give exactly one of --from (memories JSON), --db (Cerebro snapshot), or --sessions (ApexOS export)"
     );
+
+    if let Some(dir) = args.sessions.clone() {
+        return generate_sessions(paths, args, &dir);
+    }
 
     let (memories, source) = match (&args.from, &args.db) {
         (Some(path), None) => {
@@ -493,9 +511,27 @@ fn generate(paths: &Paths, args: GenerateArgs) -> Result<()> {
     };
 
     let out = convert(&memories, &cfg);
+    print_convert(&out, memories.len(), "memories");
+    finish_generate(paths, &args.name, args.dry_run, &out, source)
+}
 
-    println!("memories in     {}", memories.len());
-    println!("memories used   {}", out.memories_used);
+fn generate_sessions(paths: &Paths, args: GenerateArgs, dir: &std::path::Path) -> Result<()> {
+    let mut cfg = puerperium::harvest::HarvestConfig::new();
+    cfg.node_id = args.node;
+    let out = puerperium::harvest::mine_sessions(dir, &cfg)?;
+    let source = SourceSpec {
+        kind: "session_jsonl".into(),
+        query: Some(dir.display().to_string()),
+        agent_id: None,
+        memories_in: out.memories_used + out.rejections.total(),
+    };
+    print_convert(&out, source.memories_in, "rounds");
+    finish_generate(paths, &args.name, args.dry_run, &out, source)
+}
+
+fn print_convert(out: &puerperium::convert::Converted, input: usize, unit: &str) {
+    println!("{unit} in        {input}");
+    println!("{unit} used      {}", out.memories_used);
     println!("examples        {}", out.examples.len());
     println!("rejected        {}", out.rejections.total());
     for (reason, n) in out.rejections.counts() {
@@ -504,13 +540,21 @@ fn generate(paths: &Paths, args: GenerateArgs) -> Result<()> {
     for (kind, n) in &out.framing {
         println!("  framing {:<8} {n}", kind.as_str());
     }
+}
 
-    if args.dry_run {
+fn finish_generate(
+    paths: &Paths,
+    name: &str,
+    dry_run: bool,
+    out: &puerperium::convert::Converted,
+    source: SourceSpec,
+) -> Result<()> {
+    if dry_run {
         println!("\ndry run — nothing written");
         return Ok(());
     }
 
-    let meta = dataset::write(&paths.datasets(), &args.name, &out, source)?;
+    let meta = dataset::write(&paths.datasets(), name, out, source)?;
 
     println!(
         "\nwrote {}",

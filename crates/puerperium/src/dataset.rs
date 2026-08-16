@@ -31,7 +31,7 @@ pub struct DatasetRef {
 /// What produced a dataset.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceSpec {
-    /// `"cerebro_query"`, `"export_file"`, `"synthetic"`.
+    /// `"cerebro_query"`, `"export_file"`, `"synthetic"`, `"session_jsonl"`.
     pub kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub query: Option<String>,

@@ -58,6 +58,18 @@
   needs specifics. Don't read a big memory count as a big dataset: the node with 6x more
   memories yielded a third as much trainable material.**
 
+- **Session JSONL is the trajectory store; Cerebro is the lesson store (D13).** ApexOS
+  already appends every turn to `<AGENTD_LOG>/sessions/<id>.jsonl`. `session_save` /
+  consolidate *summarise* on purpose. Dumping those transcripts into Cerebro would
+  feed the dream engine the poison above. Closed-API thinking (`ContentBlock::Thinking`
+  with an Anthropic signature) stays in the live file for provider replay and is
+  **stripped** from markdown, RAG, and training examples — parsing a field is not a
+  license. OAI `reasoning_content` is not parsed today, so a thinking Qwen leaves
+  empty-assistant rounds. Mine a *copied* export, never a live log dir; secret-scan
+  before `job upload`. Long form: `docs/harvest.md`.
+  **Don't `remember` a transcript, don't train on hidden CoT because it sat in JSONL,
+  and don't treat Router `capture_bodies` as a working tap — it is a dead knob.**
+
 - **A MINIMUM CHARGE dominates small fine-tunes, and no local heuristic can see it.** The first
   shipped job metered **50,319 tokens = $0.076** and was billed **$4.00** — 53x. Our chars/4
   estimator said $0.28 and was wrong twice over: 3.6x high on tokens *and* blind to the floor.
