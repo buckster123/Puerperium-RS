@@ -26,7 +26,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::dataset::{self, DatasetRef};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::paths::Paths;
 use crate::store;
 
@@ -104,6 +104,18 @@ impl ApprenticeRecord {
 
 pub fn save_model(paths: &Paths, record: &ModelRecord) -> Result<()> {
     store::save(&paths.models(), &record.name, record)
+}
+
+/// Register a new model. Refuses to overwrite — a silent replace would rewrite lineage
+/// under a name someone already trained.
+pub fn add_model(paths: &Paths, record: &ModelRecord) -> Result<()> {
+    if model_exists(paths, &record.name) {
+        return Err(Error::AlreadyExists {
+            what: "model".into(),
+            name: record.name.clone(),
+        });
+    }
+    save_model(paths, record)
 }
 
 pub fn load_model(paths: &Paths, name: &str) -> Result<ModelRecord> {
@@ -320,6 +332,16 @@ mod tests {
         let m = model("tool-forge-v1", None);
         save_model(&p, &m).expect("save");
         assert!(model_exists(&p, "tool-forge-v1"));
+        assert_eq!(load_model(&p, "tool-forge-v1").expect("load"), m);
+    }
+
+    #[test]
+    fn adding_a_model_twice_is_refused() {
+        let (_d, p) = paths();
+        let m = model("tool-forge-v1", None);
+        add_model(&p, &m).expect("first");
+        let err = add_model(&p, &m).expect_err("second must refuse");
+        assert!(matches!(err, Error::AlreadyExists { .. }), "got {err:?}");
         assert_eq!(load_model(&p, "tool-forge-v1").expect("load"), m);
     }
 

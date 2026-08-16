@@ -31,10 +31,33 @@ pub fn validate_name(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Create `dir` (and parents) and lock it to owner-only (`0700` on Unix).
+pub fn ensure_dir(dir: &Path) -> Result<()> {
+    fs::create_dir_all(dir).map_err(|e| Error::io(dir, e))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
+            .map_err(|e| Error::io(dir, e))?;
+    }
+    Ok(())
+}
+
+/// Restrict a file to owner read/write (`0600` on Unix). No-op elsewhere.
+pub fn lock_private(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .map_err(|e| Error::io(path, e))?;
+    }
+    Ok(())
+}
+
 /// `tmp → fsync → rename`. A reader never sees a half-written record.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
+        ensure_dir(parent)?;
     }
     let tmp = path.with_extension("tmp");
     {
@@ -42,7 +65,8 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         f.write_all(bytes).map_err(|e| Error::io(&tmp, e))?;
         f.sync_all().map_err(|e| Error::io(&tmp, e))?;
     }
-    fs::rename(&tmp, path).map_err(|e| Error::io(path, e))
+    fs::rename(&tmp, path).map_err(|e| Error::io(path, e))?;
+    lock_private(path)
 }
 
 pub fn record_path(dir: &Path, name: &str) -> PathBuf {
@@ -210,5 +234,29 @@ mod tests {
         fs::write(dir.path().join("a.jsonl"), "ignore me too").expect("write");
         let got: Vec<Rec> = list(dir.path()).expect("list");
         assert_eq!(got.len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn written_records_are_owner_readable_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        save(
+            dir.path(),
+            "a",
+            &Rec {
+                name: "a".into(),
+                n: 1,
+            },
+        )
+        .expect("save");
+        let file_mode = fs::metadata(record_path(dir.path(), "a"))
+            .expect("meta")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(file_mode, 0o600, "records must be 0600");
+        let dir_mode = fs::metadata(dir.path()).expect("dir").permissions().mode() & 0o777;
+        assert_eq!(dir_mode, 0o700, "state dirs must be 0700");
     }
 }

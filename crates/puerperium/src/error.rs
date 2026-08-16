@@ -19,6 +19,9 @@ pub enum Error {
     #[error("{what} {name:?} already exists")]
     AlreadyExists { what: String, name: String },
 
+    #[error("job {id} already exists ({reason}) — not resubmitted")]
+    JobExists { id: String, reason: String },
+
     #[error("no record named {name:?} in {dir}")]
     RecordNotFound { dir: PathBuf, name: String },
 

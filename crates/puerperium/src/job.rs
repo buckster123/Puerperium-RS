@@ -51,23 +51,43 @@ pub enum Method {
     LoraSft,
 }
 
+/// New fields MUST carry `#[serde(default)]` (or `default = "…"`). A snapshot
+/// written before the field existed has to keep loading — jobs are money-adjacent
+/// and a parse failure used to hide them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Hyperparams {
+    #[serde(default = "default_n_epochs")]
     pub n_epochs: u32,
+    #[serde(default = "default_learning_rate")]
     pub learning_rate: f64,
+    #[serde(default = "default_lora_r")]
     pub lora_r: u32,
+    #[serde(default = "default_lora_alpha")]
     pub lora_alpha: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch_size: Option<u32>,
 }
 
+fn default_n_epochs() -> u32 {
+    3
+}
+fn default_learning_rate() -> f64 {
+    1e-5
+}
+fn default_lora_r() -> u32 {
+    16
+}
+fn default_lora_alpha() -> u32 {
+    32
+}
+
 impl Default for Hyperparams {
     fn default() -> Self {
         Self {
-            n_epochs: 3,
-            learning_rate: 1e-5,
-            lora_r: 16,
-            lora_alpha: 32,
+            n_epochs: default_n_epochs(),
+            learning_rate: default_learning_rate(),
+            lora_r: default_lora_r(),
+            lora_alpha: default_lora_alpha(),
             batch_size: None,
         }
     }
@@ -135,6 +155,10 @@ pub struct JobRecord {
     /// Written once, when a terminal state is observed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal: Option<Terminal>,
+    /// When we asked the upstream to stop. A fact about *us*, not an outcome — only an
+    /// observed `cancelled` from the provider is [`Outcome::Cancelled`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancel_requested_at: Option<DateTime<Utc>>,
     /// ApexRouter ledger rows, for cost attribution. Referenced, never duplicated — Router
     /// stays the single source of truth for what money happened.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -206,6 +230,16 @@ impl Phase {
     }
 }
 
+impl Outcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Outcome::Succeeded => "succeeded",
+            Outcome::Failed => "failed",
+            Outcome::Cancelled => "cancelled",
+        }
+    }
+}
+
 // ------------------------------------------------------------ the log
 
 pub fn log_path(dir: &Path) -> PathBuf {
@@ -214,7 +248,7 @@ pub fn log_path(dir: &Path) -> PathBuf {
 
 /// Append a snapshot. The current state of a job is the last snapshot bearing its id.
 pub fn append(dir: &Path, record: &JobRecord) -> Result<()> {
-    fs::create_dir_all(dir).map_err(|e| Error::io(dir, e))?;
+    crate::store::ensure_dir(dir)?;
     let path = log_path(dir);
     let mut line = serde_json::to_string(record)?;
     line.push('\n');
@@ -226,36 +260,72 @@ pub fn append(dir: &Path, record: &JobRecord) -> Result<()> {
         .map_err(|e| Error::io(&path, e))?;
     f.write_all(line.as_bytes())
         .map_err(|e| Error::io(&path, e))?;
-    f.sync_all().map_err(|e| Error::io(&path, e))
+    f.sync_all().map_err(|e| Error::io(&path, e))?;
+    crate::store::lock_private(&path)
+}
+
+/// A snapshot line that could not be parsed. Reported, never fatal — one bad append
+/// must not make every job unreadable, and a schema bump must not hide a paid run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkippedSnapshot {
+    pub line: usize,
+    pub reason: String,
+}
+
+/// Current jobs plus any snapshots the fold could not read.
+#[derive(Debug, Clone)]
+pub struct JobLog {
+    pub jobs: Vec<JobRecord>,
+    pub skipped: Vec<SkippedSnapshot>,
+}
+
+/// Fold the log into current state, newest first, and name every line that did not parse.
+///
+/// A missing log is an **empty list, not an error**.
+pub fn load_log(dir: &Path) -> Result<JobLog> {
+    let path = log_path(dir);
+    let file = match fs::File::open(&path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(JobLog {
+                jobs: Vec::new(),
+                skipped: Vec::new(),
+            })
+        }
+        Err(e) => return Err(Error::io(&path, e)),
+    };
+
+    let mut folded: BTreeMap<String, JobRecord> = BTreeMap::new();
+    let mut skipped = Vec::new();
+    for (idx, line) in BufReader::new(file).lines().enumerate() {
+        let line = line.map_err(|e| Error::io(&path, e))?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<JobRecord>(&line) {
+            Ok(rec) => {
+                folded.insert(rec.id.clone(), rec);
+            }
+            Err(e) => skipped.push(SkippedSnapshot {
+                line: idx + 1,
+                reason: e.to_string(),
+            }),
+        }
+    }
+
+    let mut jobs: Vec<JobRecord> = folded.into_values().collect();
+    jobs.sort_by_key(|j| std::cmp::Reverse(j.submitted_at));
+    Ok(JobLog { jobs, skipped })
 }
 
 /// Fold the log into current state, newest first.
 ///
 /// A missing log is an **empty list, not an error**. A malformed line is **skipped, not
 /// fatal** — one bad append must never make every job unreadable, and the surviving records
-/// are still the truth about real submitted work.
+/// are still the truth about real submitted work. Call [`load_log`] when the skip list
+/// itself must be shown.
 pub fn load_all(dir: &Path) -> Result<Vec<JobRecord>> {
-    let path = log_path(dir);
-    let file = match fs::File::open(&path) {
-        Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(Error::io(&path, e)),
-    };
-
-    let mut folded: BTreeMap<String, JobRecord> = BTreeMap::new();
-    for line in BufReader::new(file).lines() {
-        let line = line.map_err(|e| Error::io(&path, e))?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        if let Ok(rec) = serde_json::from_str::<JobRecord>(&line) {
-            folded.insert(rec.id.clone(), rec);
-        }
-    }
-
-    let mut out: Vec<JobRecord> = folded.into_values().collect();
-    out.sort_by_key(|j| std::cmp::Reverse(j.submitted_at));
-    Ok(out)
+    Ok(load_log(dir)?.jobs)
 }
 
 /// One job by id.
@@ -290,6 +360,7 @@ mod tests {
             compute: ComputeRef::Managed,
             submitted_at: Utc::now(),
             terminal: None,
+            cancel_requested_at: None,
             ledger_refs: vec![],
         }
     }
@@ -335,8 +406,47 @@ mod tests {
         writeln!(f, "{{ this is not json").expect("write junk");
         append(dir.path(), &record("j2")).expect("append after junk");
 
-        let all = load_all(dir.path()).expect("must not fail");
-        assert_eq!(all.len(), 2, "the good records still load");
+        let log = load_log(dir.path()).expect("must not fail");
+        assert_eq!(log.jobs.len(), 2, "the good records still load");
+        assert_eq!(
+            log.skipped.len(),
+            1,
+            "the junk line is reported, not hidden"
+        );
+        assert_eq!(log.skipped[0].line, 2);
+    }
+
+    /// Regression: a snapshot written before `cancel_requested_at` (and before
+    /// `batch_size` on hyperparams) must still load. Jobs are money-adjacent —
+    /// a schema bump that fails to default hides a paid run.
+    #[test]
+    fn snapshot_written_before_a_field_existed_still_loads() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = log_path(dir.path());
+        fs::write(
+            &path,
+            r#"{"id":"j1","provider":"together","dataset":{"name":"d","sha256":"abc"},"base_model":"Qwen/Qwen3.6-35B-A3B","output_name":"worker-v1","method":"lora_sft","hyperparams":{"n_epochs":3,"learning_rate":1e-5,"lora_r":16,"lora_alpha":32},"trainer_agent":"FORGE","compute":{"kind":"managed"},"submitted_at":"2026-08-03T00:00:00Z"}
+"#,
+        )
+        .expect("write legacy snapshot");
+
+        let rec = load(dir.path(), "j1").expect("legacy snapshot must still load");
+        assert_eq!(rec.id, "j1");
+        assert_eq!(rec.hyperparams.n_epochs, 3);
+        assert_eq!(rec.hyperparams.batch_size, None);
+        assert!(rec.cancel_requested_at.is_none());
+        assert!(rec.terminal.is_none());
+    }
+
+    #[test]
+    fn a_partial_hyperparams_object_fills_the_documented_defaults() {
+        let got: Hyperparams =
+            serde_json::from_str(r#"{"n_epochs":5}"#).expect("missing fields default");
+        assert_eq!(got.n_epochs, 5);
+        assert_eq!(got.lora_r, 16);
+        assert_eq!(got.lora_alpha, 32);
+        assert!((got.learning_rate - 1e-5).abs() < 1e-15);
+        assert_eq!(got.batch_size, None);
     }
 
     #[test]
@@ -383,5 +493,19 @@ mod tests {
             !Phase::Cancelling.is_terminal(),
             "cancel requested is not cancelled"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_job_log_is_owner_readable_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        append(dir.path(), &record("j1")).expect("append");
+        let mode = fs::metadata(log_path(dir.path()))
+            .expect("meta")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
     }
 }

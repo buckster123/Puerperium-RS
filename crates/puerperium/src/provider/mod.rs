@@ -84,6 +84,7 @@ pub struct Scripted {
     pub poll_results: std::cell::RefCell<Vec<Result<ProviderStatus, String>>>,
     pub cancel_result: Option<Result<(), String>>,
     pub polls: std::cell::Cell<usize>,
+    pub submits: std::cell::Cell<usize>,
 }
 
 impl Scripted {
@@ -110,10 +111,15 @@ impl Scripted {
     pub fn poll_count(&self) -> usize {
         self.polls.get()
     }
+
+    pub fn submit_count(&self) -> usize {
+        self.submits.get()
+    }
 }
 
 impl TrainingProvider for Scripted {
     fn submit(&self, _req: &SubmitRequest) -> Result<String, ProviderError> {
+        self.submits.set(self.submits.get() + 1);
         match &self.submit_result {
             Some(Ok(id)) => Ok(id.clone()),
             Some(Err(e)) => Err(ProviderError::Rejected(e.clone())),

@@ -85,6 +85,7 @@ pub struct JobRecord {
     pub compute: ComputeRef,             // what it ran on, and who provisioned it
     pub submitted_at: DateTime<Utc>,
     pub terminal: Option<Terminal>,      // written ONCE, when observed terminal
+    pub cancel_requested_at: Option<DateTime<Utc>>, // the ask; not an outcome
     pub ledger_refs: Vec<String>,        // ApexRouter ledger rows, for cost attribution
 }
 
@@ -270,9 +271,19 @@ observed terminal ──► write Terminal ONCE (immutable)
 
 - The record is written **before** the upstream call. A crash between write and submit leaves a
   job with no `provider_job_id` — recoverable and visible, which is the point.
+- A job id is unique once it has a `provider_job_id` or a terminal. Resubmitting would
+  last-write-wins the fold and orphan a paid run. A crash-row (id exists, neither set) is
+  retried in place with the original facts; a different spec under the same id is refused.
 - A poll timeout does **not** fail the job. A paid run that outlives our patience is still
   running; it stays non-terminal and resumable by `provider_job_id` (doctrine #9).
 - `Terminal` is written once. A terminal job is never re-polled.
+- Cancel records `cancel_requested_at` (a fact about the ask) and does **not** write local
+  `Cancelled` — only an observed upstream `cancelled` is an outcome.
+- Unreadable snapshots are **reported**, never silently dropped. A schema bump that fails to
+  default must not hide a paid run. Every new `JobRecord` / `Hyperparams` field is
+  `#[serde(default)]`.
+- A rejected submit writes a terminal record **and** the CLI exits non-zero. The record is
+  the fact; the exit status is the operator signal.
 - Every failure path carries the real reason. No job can sit non-terminal *because* nothing
   looked at it — `nursery_list_jobs` polls.
 
@@ -501,8 +512,8 @@ Refusals, each because the alternative looks like progress and is not:
 └── fixtures/                       # captured upstream JSON for hermetic tests (D5)
 ```
 
-Atomic writes (`tmp → fsync → rename`), `0600` for anything key-adjacent. **Nothing is ever
-written into the repo directory.**
+Atomic writes (`tmp → fsync → rename`). State directories are `0700`; dataset, job, and
+registry files are `0600`. **Nothing is ever written into the repo directory.**
 
 ---
 
