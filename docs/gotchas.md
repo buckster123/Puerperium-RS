@@ -64,7 +64,9 @@
   feed the dream engine the poison above. Closed-API thinking (`ContentBlock::Thinking`
   with an Anthropic signature) stays in the live file for provider replay and is
   **stripped** from markdown, RAG, and training examples — parsing a field is not a
-  license. OAI `reasoning_content` is not parsed today, so a thinking Qwen leaves
+  license. Open-weight Qwen (Apache 2.0, confirmed 2026-08-17) makes the
+  *transcript* mineable on self-hosted / vast / local; a hosted Qwen API
+  follows that host's TOS. OAI `reasoning_content` is not parsed today, so a thinking Qwen leaves
   empty-assistant rounds. Mine a *copied* export, never a live log dir; secret-scan
   before `job upload`. Long form: `docs/harvest.md`.
   **Don't `remember` a transcript, don't train on hidden CoT because it sat in JSONL,

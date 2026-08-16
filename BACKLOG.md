@@ -122,18 +122,27 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
       (never omit checkpoint — the API default is `merged`). Writes `.tar.zst`, extracts
       with a path-escape guard, reads `trainer_state.json` epoch means. Recovery via
       `--provider-job-id` when there is no local record. Free. MCP: `nursery_download`.
-- **A healthy dataset** — 231 examples was a PoC. More *lived* material (not more epochs, not
-  dream-derived) is what the final S6 run needs. The source for that material is
-  session JSONL (`docs/harvest.md`), not another pass over the laptop FORGE mine.
-  And with a minimum charge dominating, one larger run costs the same as several
-  small ones.
+- **A healthy dataset** — 231 Cerebro-lesson examples was a PoC. The lived
+  source is session JSONL (`docs/harvest.md`). Dry-run on apex1 already
+  yields 245 `lived_turn` examples (laptop 195). Write is free and local;
+  submit/serve wait on André (D4) and on a consumer-shaped GPU, not the
+  paused 2×48 GB 4090. One larger Together run still costs the same floor
+  as several small ones.
 
-**Harvest follow-ups** (D13 designed 2026-08-16; no code)
+**Harvest follow-ups** (D13; converter shipped 2026-08-16)
 
 - [x] **Puerperium: `session_jsonl` source + trajectory converter + secret scan**
-      (2026-08-16) — `puerperium::harvest`, `--sessions` / MCP `sessions`,
-      `Provenance::SessionTurn`, secret scan before write. Live `AGENTD_LOG`
-      refused. Open-reasoning allowlist still empty (verify ToS on first mine).
+      (2026-08-16, field dry-run 2026-08-17) — `puerperium::harvest`,
+      `--sessions` / MCP `sessions`, `Provenance::SessionTurn`, secret scan
+      before write. Live `AGENTD_LOG` refused. Copied exports, nothing written:
+      laptop 259→195 kept; apex1 399→245 kept, all `lived_turn`. Biggest
+      rejects: tool_result_too_long, empty_assistant (Qwen hole). Open-weight
+      Qwen transcript confirmed Apache 2.0 (2026-08-17); hosted Qwen API is
+      that host's TOS. `open_prefixes` still empty — LoRA does not consume CoT.
+      **Written mine + Together submit parked** until a serve box exists that
+      looks like the target (vast 2×48 GB 4090 paused; consumer path is a
+      5090 or dual 3090, not that rig). Stage 2 / thinking-channel is
+      `docs/rebirth.md`, not this row.
 - **ApexOS: persist OAI `reasoning_content`** — sibling thread, **not needed
   for LoRA**. Today's Qwen thinking dies in `oai.rs`; that is fine for S6.
   Revisit if Stage 2 wants the thinking channel. Empty signature = not
