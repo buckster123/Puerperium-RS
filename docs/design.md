@@ -4,16 +4,18 @@
 > describes. Code follows this doc; a PR that changes behaviour updates this doc in the same
 > commit. When the two disagree, that is a bug in one of them — find out which, don't guess.
 >
-> Bound by `CHARTER.md` D1–D12. Where this doc and the charter disagree, the charter wins.
+> Bound by `CHARTER.md` D1–D13. Where this doc and the charter disagree, the charter wins.
 
 ## Scope
 
 Covers: the `nursery_*` MCP tool surface, the record types and their serialized form, the job
-lifecycle, the compute-discovery contract with ApexRouter, the Cerebro mining contract, and the
-environment.
+lifecycle, the compute-discovery contract with ApexRouter, the Cerebro mining contract, the
+session-JSONL harvest contract (D13 / `harvest.md`), and the environment.
 
 Does not cover: Stage 2 / rebirth (`rebirth.md`, design-frozen), inference serving, GPU
-provisioning, or quantisation — all fenced out by the charter.
+provisioning, or quantisation — all fenced out by the charter. Request-path harvest
+(ApexOS persist, Router `capture_bodies`) is specified in `harvest.md` and built in
+those repos, not here.
 
 ---
 
@@ -26,13 +28,13 @@ refusal naming what is missing (D8), never an absence and never a fake success.
 
 | Tool | Purpose |
 |---|---|
-| `nursery_generate_data` | Build an instruction dataset. Source is a **Cerebro snapshot** (`db` + `agent_id`, opened read-only) or a **memories JSON export** (`from`). Writes JSONL, stamps provenance per example, hashes the file (D12). `dry_run` defaults **true** (datasets are immutable). **Synthetic templates are not built** — that path refuses honestly rather than inventing examples. |
+| `nursery_generate_data` | Build an instruction dataset. Source is a **Cerebro snapshot** (`db` + `agent_id`, opened read-only) or a **memories JSON export** (`from`). A third exclusive source — **exported ApexOS session JSONL** (`sessions`) — is contracted in `harvest.md` (D13) and **not wired**; asking for it is an honest refusal until that slice. Writes JSONL, stamps provenance per example, hashes the file (D12). `dry_run` defaults **true** (datasets are immutable). **Synthetic templates are not built** — that path refuses honestly rather than inventing examples. |
 | `nursery_list_datasets` | Datasets with example counts, source kind, `sha256`, creation time. |
 | `nursery_inspect_dataset` | First N examples plus the provenance histogram — *where did this data come from?* answered without opening the file. |
 
-`nursery_extract_conversations` from the Python original is **not** ported as a separate verb —
-its -RS analogue (Cerebro episodes + session JSONL) is a source kind inside
-`nursery_generate_data`. Revisit only if the two need genuinely different arguments.
+`nursery_extract_conversations` from the Python original is **not** a separate verb.
+Session JSONL is source kind `session_jsonl` inside `nursery_generate_data` (D13 /
+`harvest.md`). Cerebro episodes stay narrative — they are not trajectories.
 
 ### Training forge
 
@@ -165,7 +167,31 @@ pub struct ApprenticeRecord {
 /// Every example carries where it came from (D12).
 pub struct Example {
     pub messages: Vec<Message>,          // sharegpt-style
-    pub provenance: Provenance,          // CerebroMemory{id, agent_id} | Synthetic{template}
+    pub provenance: Provenance,          // CerebroMemory | Synthetic | SessionTurn (D13)
+}
+
+/// What produced a dataset. `kind` is a closed string set, not free prose.
+pub struct SourceSpec {
+    pub kind: String,                    // cerebro_query | export_file | synthetic
+                                         // | session_jsonl (D13, not wired)
+                                         // | router_capture (parked)
+    pub query: Option<String>,
+    pub agent_id: Option<String>,        // whose space — not the trainer (D6)
+    pub memories_in: usize,              // memories or rounds, matching kind
+}
+
+/// Origin of one example (D12). SessionTurn is contracted (D13), not in the crate yet.
+pub enum Provenance {
+    CerebroMemory { memory_id: String, agent_id: Option<String>, heading_path: Vec<String> },
+    Synthetic { template: String },
+    SessionTurn {
+        node_id: String,
+        session_id: u64,
+        turn_index: u32,
+        agent_id: Option<String>,
+        license_class: LicenseClass,     // open_reasoning | closed_hidden | answer_only
+        model: Option<String>,
+    },
 }
 ```
 
@@ -514,6 +540,29 @@ Refusals, each because the alternative looks like progress and is not:
   answer which memories produced it.
 - Writing back: lineage events are stored as ordinary tagged memories
   (`nursery`, `nursery:<event>`, `job:<id>`). No new Cerebro schema, no Cerebro changes.
+- **Traces do not become Cerebro memories** (D13). `session_save` is a summary. A mined
+  session JSONL is product input, provenance-stamped, never a session note.
+
+## Session-JSONL mining contract (D13)
+
+Long form: `harvest.md`. Contracted here so the wire shapes cannot drift when the
+converter lands.
+
+- Source kind `session_jsonl`. Input is a **copied export** of ApexOS
+  `session-*.jsonl`, never a live `AGENTD_LOG`. Exclusive with `db` / `from`.
+- Unit is a **round** (user + following assistant/tool messages). Session 0, spawn
+  ids, image-only rounds, and empty-assistant rounds are skipped and counted.
+- `closed_hidden` thinking is stripped before an example is born. `open_reasoning`
+  thinking follows the allowlist in `harvest.md`, empty until verified on the day
+  of the first mine.
+- Every example keeps `Provenance::SessionTurn`. Accounting is total:
+  `rounds_in = used + rejected`.
+- Secret scan is part of convert, **before** `job upload`. A key-shaped round is
+  `rejected.secret`, never uploaded.
+- Until the converter is built, `nursery_generate_data` refuses a sessions path
+  honestly, naming this section. No new MCP verb.
+- `router_capture` is parked until ApexRouter wires `capture_bodies` under its
+  own charter.
 
 ---
 
@@ -562,6 +611,7 @@ Each of these is a future `gotchas.md` entry waiting to happen.
 6. **Puerperium never creates compute** (D4).
 7. **stdout is JSON-RPC only.** All logging to stderr.
 8. **Every example has provenance; every dataset has a hash** (D12).
+9. **Harvest is a snapshot, never a live log, and never a Cerebro dump** (D13).
 
 ---
 
@@ -589,3 +639,5 @@ Tracked in `CHARTER.md`; restated here where they bind the contract.
   simplification.
 - **Dataset format**: sharegpt-style `messages` assumed. Confirm against Together's expected
   schema at S3 and pin it here.
+- ~~**Does `nursery_extract_conversations` survive?**~~ **No** (2026-08-16, D13).
+  Source kind `session_jsonl` inside `nursery_generate_data`. See `harvest.md`.

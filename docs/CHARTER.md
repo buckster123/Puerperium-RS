@@ -2,7 +2,7 @@
 
 > **The decisions log below is BINDING.** Amend it with a dated entry; never silently.
 > Where this document and the code disagree, one of them is a bug — say which.
-> Where a later doc and D1–D12 disagree, **D1–D12 win**.
+> Where a later doc and D1–D13 disagree, **D1–D13 win**.
 
 ## What this is
 
@@ -37,6 +37,8 @@ feature is in or out without re-arguing it.
   eventually assimilated into ApexOS-RS is **that repo's decision, in its own thread** — not
   assumed here.
 - **Not an autonomous spender.** No default flow reaches a paid operation (D4).
+- **Not a request-path harvester.** Session persistence is ApexOS's; optional body
+  capture is ApexRouter's. Puerperium converts snapshots (D13).
 
 ## Decisions
 
@@ -111,6 +113,22 @@ feature is in or out without re-arguing it.
   *Reason:* lineage *is* the product. An unattributable dataset produces an unattributable
   model, and the registry stops being able to answer "why is this specialist like this?"
 
+- **D13 — Harvest is licensed, opted-in, and never a Cerebro dump.** Puerperium converts
+  snapshots; it does not sit on the request path. Taps live in ApexOS (session owner)
+  and, later, ApexRouter (optional capture) — those changes are those repos' threads
+  (D1). Three license classes (`open_reasoning` / `closed_hidden` / `answer_only`) are
+  an explicit model-id allowlist, never guessed: closed-API chain-of-thought may stay
+  in a live session file for provider replay and is **stripped** from markdown, RAG,
+  and training examples. Traces do not become Cerebro memories — Cerebro is the lesson
+  store; a mined trace is product input and is provenance-stamped (D12). A mine reads
+  a copied export, same discipline as `sqlite3 … ".backup"`. Secret-scan before
+  anything leaves the box. Long form: `docs/harvest.md`.
+  *Reason:* the first Together run trained on remembered lessons and came up thin;
+  dream extraction had already abstracted the specifics. The lived turns sit in
+  ApexOS session JSONL. Dumping those into Cerebro would feed the dream engine the
+  thing we just measured as poison, and training on Anthropic/OpenAI hidden reasoning
+  because it happens to sit in JSONL for API replay would be a ToS and honesty failure.
+
 ## Phases
 
 v1 ships the Stage-1 loop. Each gate is checkable, not aspirational.
@@ -169,13 +187,22 @@ v1 ships the Stage-1 loop. Each gate is checkable, not aspirational.
 - **Artifact handoff shape.** Does Puerperium register the adapter with Router itself, or hand
   back a path and let the operator route it? Leaning: hand back, then offer registration as a
   separate explicit verb — it keeps D2's boundary clean.
-- **Does `nursery_extract_conversations` survive?** The Python original mined
-  `sandbox/conversations.json`. The -RS analogue is Cerebro episodes + session JSONL, shaped
-  differently. May collapse into `nursery_generate_data`.
+- ~~**Does `nursery_extract_conversations` survive?**~~ **Collapsed 2026-08-16.** Not a
+  separate verb. Session JSONL is a source kind inside `nursery_generate_data`
+  (`session_jsonl`); Cerebro episodes stay narrative. See D13 and `docs/harvest.md`.
 
 ---
 
 ## Amendments
+
+- **2026-08-16** — **Harvest is licensed, opted-in, and never a Cerebro dump (D13).**
+  The first paid run trained on Cerebro lessons and came up thin; the lived turns
+  already sit in ApexOS session JSONL. This amendment pins the snapshot contract
+  (`docs/harvest.md`) and retires the open question about
+  `nursery_extract_conversations`. No converter, RAG index, or sibling-repo tap
+  ships from this entry — those are later slices in the repo that owns the tap.
+  D1–D12 stand; D4/D5/D8 apply to harvest the same way they apply to training.
+  Router `capture_bodies` stays a dead knob until *their* charter says otherwise.
 
 - **2026-08-16** — **`job download` is the missing link, and it shipped.** A finished
   Together job is now `GET /v1/finetune/download?checkpoint=adapter` (never omit
