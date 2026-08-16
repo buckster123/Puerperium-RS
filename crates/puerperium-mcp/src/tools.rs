@@ -14,6 +14,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "nursery_job_status",
     "nursery_list_jobs",
     "nursery_cancel_job",
+    "nursery_download",
     "nursery_list_models",
     "nursery_register_model",
     "nursery_test_model",
@@ -149,6 +150,18 @@ fn tool_schema(name: &str) -> Value {
                 "type": "object",
                 "properties": { "id": { "type": "string" } },
                 "required": ["id"]
+            }
+        }),
+        "nursery_download" => json!({
+            "name": name,
+            "description": "Pull a finished Together adapter home and read trainer_state.json. FREE. Default checkpoint is adapter (the LoRA weights). Omitting checkpoint on Together's wire would fetch merged — the full model. Give a local job id (must be succeeded) or a provider_job_id (ft-…) to recover.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Local job id. Record must already be succeeded." },
+                    "provider_job_id": { "type": "string", "description": "Together ft-… id. Recovers a job with no local record." },
+                    "checkpoint": { "type": "string", "description": "adapter (default), merged, or model_output_path." }
+                }
             }
         }),
         "nursery_list_models" => json!({

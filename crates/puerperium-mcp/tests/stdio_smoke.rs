@@ -128,6 +128,7 @@ fn agent_can_compose_the_nursery_surface() {
         "nursery_job_status",
         "nursery_list_jobs",
         "nursery_cancel_job",
+        "nursery_download",
         "nursery_list_models",
         "nursery_register_model",
         "nursery_test_model",
@@ -140,7 +141,7 @@ fn agent_can_compose_the_nursery_surface() {
             "missing {expected} in {names:?}"
         );
     }
-    assert_eq!(names.len(), 16);
+    assert_eq!(names.len(), 17);
     assert!(!names.iter().any(|n| n.contains("rebirth")));
 
     let datasets = payload(&s.call("nursery_list_datasets", json!({})));

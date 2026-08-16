@@ -173,6 +173,8 @@ cargo build --release --workspace
 ./target/release/puerperium job upload my-set          # -> training_file_id
 ./target/release/puerperium job list                   # polls non-terminal jobs
 ./target/release/puerperium job status j1
+./target/release/puerperium job download j1            # adapter + loss curve; free
+./target/release/puerperium job download --provider-job-id ft-…   # recover without a local record
 ```
 
 **Credentials.** `TOGETHER_API_KEY` is read from the process environment. A real environment

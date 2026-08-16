@@ -371,6 +371,80 @@ pub fn parse_price_estimate(body: &str) -> Result<PriceEstimate, ProviderError> 
     })
 }
 
+/// What Together's download endpoint should return.
+///
+/// **Always send this.** Omitting `checkpoint` makes the API default to `merged` for a
+/// LoRA job — the full combined weights, not the 16 MB adapter. Serving on vast/local
+/// wants the adapter on top of a base we already have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Checkpoint {
+    Adapter,
+    Merged,
+    ModelOutputPath,
+}
+
+impl Checkpoint {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Checkpoint::Adapter => "adapter",
+            Checkpoint::Merged => "merged",
+            Checkpoint::ModelOutputPath => "model_output_path",
+        }
+    }
+
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s.trim() {
+            "adapter" => Ok(Checkpoint::Adapter),
+            "merged" => Ok(Checkpoint::Merged),
+            "model_output_path" => Ok(Checkpoint::ModelOutputPath),
+            other => Err(format!(
+                "unknown checkpoint {other:?} — want adapter, merged, or model_output_path"
+            )),
+        }
+    }
+}
+
+/// Path + query for `GET /v1/finetune/download`. Pure. Host is the client's problem.
+///
+/// `checkpoint` is always present — the API's implicit default is `merged`.
+pub fn download_path(ft_id: &str, checkpoint: Checkpoint) -> String {
+    format!(
+        "finetune/download?ft_id={ft_id}&checkpoint={}",
+        checkpoint.as_str()
+    )
+}
+
+/// Filename from a `Content-Disposition` header. Falls back to `{checkpoint}.tar.zst`.
+pub fn filename_from_disposition(header: Option<&str>, checkpoint: Checkpoint) -> String {
+    if let Some(h) = header {
+        for part in h.split(';') {
+            let part = part.trim();
+            let Some(rest) = part
+                .strip_prefix("filename*=")
+                .or_else(|| part.strip_prefix("filename="))
+            else {
+                continue;
+            };
+            let name = rest
+                .trim()
+                .trim_matches('"')
+                .rsplit("''")
+                .next()
+                .unwrap_or(rest)
+                .trim();
+            if !name.is_empty()
+                && !name.contains('/')
+                && !name.contains('\\')
+                && !name.contains("..")
+            {
+                return name.to_string();
+            }
+        }
+    }
+    format!("{}.tar.zst", checkpoint.as_str())
+}
+
 /// `total_price` on a job record is in **nano-dollars**, not dollars.
 ///
 /// A completed job reporting `4000000000` cost **$4.00**. Reading it as dollars would be off
@@ -398,6 +472,39 @@ pub fn lora_price_per_mtok(params_b: f64) -> Option<f64> {
 mod tests {
     use super::*;
     use crate::job::{Hyperparams, Method};
+
+    #[test]
+    fn download_path_always_names_the_checkpoint() {
+        let p = download_path("ft-da39441f-d088", Checkpoint::Adapter);
+        assert_eq!(
+            p,
+            "finetune/download?ft_id=ft-da39441f-d088&checkpoint=adapter"
+        );
+        assert!(
+            p.contains("checkpoint=adapter"),
+            "omitting checkpoint downloads merged"
+        );
+    }
+
+    #[test]
+    fn disposition_filename_rejects_a_path() {
+        assert_eq!(
+            filename_from_disposition(
+                Some(r#"attachment; filename="adapter.tar.zst""#),
+                Checkpoint::Adapter
+            ),
+            "adapter.tar.zst"
+        );
+        assert_eq!(
+            filename_from_disposition(Some(r#"attachment; filename="../x""#), Checkpoint::Adapter),
+            "adapter.tar.zst",
+            "a path in the header must not win"
+        );
+        assert_eq!(
+            filename_from_disposition(None, Checkpoint::Merged),
+            "merged.tar.zst"
+        );
+    }
 
     fn qwen_limits() -> Limits {
         Limits {

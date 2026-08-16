@@ -45,6 +45,7 @@ its -RS analogue (Cerebro episodes + session JSONL) is a source kind inside
 | `nursery_job_status` | One job: facts from the record, phase computed live from the provider (D3). Unreachable provider is `Unknown`, not `Failed`. |
 | `nursery_list_jobs` | All jobs, newest first, phases computed. Unreadable snapshots are reported, not hidden. |
 | `nursery_cancel_job` | Ask the upstream to stop. Records `cancel_requested_at`; does not write local `Cancelled`. |
+| `nursery_download` | Pull a finished Together adapter home (`.tar.zst`) and read `trainer_state.json`. **FREE.** Default checkpoint is `adapter`. Omitting `checkpoint` on Together's wire fetches `merged` (the full model) — we never omit it. Compare **epoch means**, never first-step vs last-step. |
 
 ### Model cradle
 

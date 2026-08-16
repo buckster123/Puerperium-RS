@@ -12,6 +12,18 @@
 > explicit don't. Cross-project version drift lives in
 > `~/Projects/Launchpad-RS/docs/sharp-edges.md` instead.
 
+- **Omitting `checkpoint` on Together's download fetches `merged`, not the adapter.**
+  `GET /v1/finetune/download` defaults to the full combined weights for a LoRA job.
+  The adapter we actually want for vast/local is `checkpoint=adapter` (~16 MB, free)
+  and contains `trainer_state.json`. **Always send `checkpoint=adapter` unless the
+  operator asked for merged. Don't treat first-step vs last-step loss as the trend —
+  compare epoch means; per-step stdev can be 20× the epoch-to-epoch change.**
+
+- **A Together download archive is `.tar.zst`, and its entries can escape.** The
+  payload is Zstandard-compressed tar, not gzip. Extracting without a `..` / absolute
+  path guard writes wherever the archive points. **Don't gunzip it, and don't extract
+  an entry whose path leaves the destination.**
+
 - **MCP stdout is sacred.** `puerperium-mcp` speaks newline-delimited JSON-RPC on stdout.
   All `tracing` goes to **stderr**. A stray `println!` (or anything else that writes a
   non-JSON line to stdout) corrupts the stream and the client sees a parse error that

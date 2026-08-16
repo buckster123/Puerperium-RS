@@ -61,6 +61,7 @@ impl Face {
             "nursery_job_status" => self.job_status(args),
             "nursery_list_jobs" => self.list_jobs(),
             "nursery_cancel_job" => self.cancel_job(args),
+            "nursery_download" => self.download(args),
             "nursery_list_models" => self.list_models(),
             "nursery_register_model" => self.register_model(args),
             "nursery_test_model" => self.test_model(args),
@@ -403,6 +404,32 @@ impl Face {
             "skipped": skipped,
             "poll_note": poll_note,
         }))
+    }
+
+    fn download(&self, args: &Value) -> Result<Value, CallError> {
+        let id = opt_str(args, "id").map(str::to_string);
+        let provider_job_id = opt_str(args, "provider_job_id").map(str::to_string);
+        if id.is_none() && provider_job_id.is_none() {
+            return Err(CallError::InvalidArgs(
+                "id (local job) or provider_job_id (ft-…) is required".into(),
+            ));
+        }
+        let checkpoint = match opt_str(args, "checkpoint") {
+            Some(s) => puerperium::provider::together::Checkpoint::parse(s)
+                .map_err(CallError::InvalidArgs)?,
+            None => puerperium::provider::together::Checkpoint::Adapter,
+        };
+        let report = puerperium::download::fetch(
+            &self.paths,
+            &together()?,
+            puerperium::download::Spec {
+                job_id: id,
+                provider_job_id,
+                checkpoint,
+            },
+        )
+        .map_err(lib_err)?;
+        serde_json::to_value(report).map_err(|e| CallError::Failed(e.to_string()))
     }
 
     fn cancel_job(&self, args: &Value) -> Result<Value, CallError> {
@@ -886,6 +913,13 @@ mod tests {
             .expect_err("refuse");
         assert!(matches!(err, CallError::Refused { .. }));
         assert!(err.to_string().contains("confirm"));
+    }
+
+    #[test]
+    fn download_requires_an_id() {
+        let (_d, face) = face();
+        let err = face.call("nursery_download", &json!({})).expect_err("args");
+        assert!(matches!(err, CallError::InvalidArgs(_)));
     }
 
     #[test]

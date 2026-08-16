@@ -100,10 +100,10 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
 
 **Next up — the gap the first real run exposed**
 
-- **`job download`** — a Together fine-tune leaves its artifact as a model name hosted on
-  *their* side. Serving on vast/local (charter amendment 2026-08-03) means the adapter weights
-  have to come home. This is now the missing link between a finished job and a servable model:
-  without it a completed job produces something nameable in lineage but not runnable.
+- [x] **`job download`** (2026-08-16) — `GET /v1/finetune/download?checkpoint=adapter`
+      (never omit checkpoint — the API default is `merged`). Writes `.tar.zst`, extracts
+      with a path-escape guard, reads `trainer_state.json` epoch means. Recovery via
+      `--provider-job-id` when there is no local record. Free. MCP: `nursery_download`.
 - **A healthy dataset** — 231 examples was a PoC. More *lived* material (not more epochs, not
   dream-derived) is what the final S6 run needs. And with a minimum charge dominating, one
   larger run costs the same as several small ones.
