@@ -134,9 +134,10 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
       (2026-08-16) — `puerperium::harvest`, `--sessions` / MCP `sessions`,
       `Provenance::SessionTurn`, secret scan before write. Live `AGENTD_LOG`
       refused. Open-reasoning allowlist still empty (verify ToS on first mine).
-- **ApexOS: persist OAI `reasoning_content`** — sibling thread. Today's Qwen
-  thinking dies in `oai.rs`. Empty signature = not Anthropic-replay; do not send
-  thinking back on the OAI path.
+- **ApexOS: persist OAI `reasoning_content`** — sibling thread, **not needed
+  for LoRA**. Today's Qwen thinking dies in `oai.rs`; that is fine for S6.
+  Revisit if Stage 2 wants the thinking channel. Empty signature = not
+  Anthropic-replay; do not send thinking back on the OAI path.
 - **ApexOS: session RAG index** — sibling thread. Own index under `AGENTD_LOG`;
   Cerebro embed as a service, never `remember`. Query other sessions at turn start.
 - **ApexRouter: wire `capture_bodies`** — sibling thread, and only after *their*

@@ -204,6 +204,16 @@ v1 ships the Stage-1 loop. Each gate is checkable, not aspirational.
   D1–D12 stand; D4/D5/D8 apply to harvest the same way they apply to training.
   Router `capture_bodies` stays a dead knob until *their* charter says otherwise.
 
+- **2026-08-16** — **LoRA does not consume the thinking channel.** Two
+  questions: (1) may we train on the visible transcript, (2) may we train on
+  CoT. S6 needs (1) only. OpenRouter's Distillable collection
+  (`is_trainable_text`, 114 models on this day — Qwen 51 including 3.8 27B
+  and 3.8 2.4T, DeepSeek / Kimi / Mistral / Llama / Nemotron; zero
+  Anthropic/OpenAI/Google/xAI) is a glance for (1), not an oracle. Self-hosted
+  / vast / local ApexOS is (1) by the checkpoint license. Western API
+  sessions are not mineable even with thinking stripped. D13 stands;
+  `open_prefixes` stays empty until Stage 2 asks.
+
 - **2026-08-16** — **`job download` is the missing link, and it shipped.** A finished
   Together job is now `GET /v1/finetune/download?checkpoint=adapter` (never omit
   `checkpoint` — the API default is `merged`), a `.tar.zst` extract with a path-escape

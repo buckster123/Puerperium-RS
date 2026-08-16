@@ -105,29 +105,64 @@ Markdown export, RAG chunks, and training examples **always** strip `closed_hidd
 thinking text. The signature may remain in the live session file so Anthropic replay
 does not 400. That file is not a training corpus.
 
-### Allowlist (empty until verified)
+### Two questions, not one
 
-Pin model-id prefixes here on the day of the first mine, after reading the provider's
-current terms. Do not guess from memory of an older ToS.
+`is_trainable_text` (and every Western API ToS) is about using the **visible
+output** to train another model. The thinking channel is a second, stricter
+question. They are not the same gate.
+
+| Question | LoRA / S6 (now) | Stage 2 full-weight (later) |
+|---|---|---|
+| May we train on the transcript (user + assistant text + tools)? | **Yes, if the source is mineable** | same |
+| May we train on the thinking / `reasoning_content` channel? | **No — we do not need it** | maybe, still allowlisted |
+
+A worker LoRA learns *what the agent did*: the user ask, the tool calls, the
+visible answer. Hidden CoT is expensive, often ToS-poisoned, and not the
+signal this stage is short of. Keep thinking stripped unless a later rebirth
+slice asks for it.
+
+**Mineable transcript** (question 1) — any of:
+
+- Self-hosted / vast / local weights on an ApexOS node (no API ToS; the
+  license on the checkpoint is the one that matters).
+- An API whose author has allowed text distillation. OpenRouter's
+  `is_trainable_text` / Distillable collection is a **glance, not an oracle**
+  (their own docs: best-effort; verify the license for the use).
+- Glance 2026-08-16, `GET /api/v1/models?distillable=true`: **114** models.
+  Authors: `qwen` 51 (incl. `qwen/qwen3.8-27b`, `qwen/qwen3.8-2.4t-a95b`,
+  `qwen/qwen3.8-max`, `qwen/qwen3.6-35b-a3b`), `mistralai` 18, `nvidia` 13,
+  `deepseek` 12, `moonshotai` 8, `meta-llama` 8. **Zero** `anthropic` /
+  `openai` / `google` / `x-ai`. Collection:
+  <https://openrouter.ai/collections/distillable-models>. Cookbook:
+  <https://openrouter.ai/docs/cookbook/evaluate-and-optimize/distillation>.
+- Alibaba/Qwen terms: André confirming. Community distills of 3.8 2.4T
+  already exist; treat that as smoke, not a substitute for the license page.
+
+**Not mineable:** a session whose assistant turns came from Claude / GPT /
+Gemini / Grok over their APIs. Those outputs are not training data, even
+with thinking stripped. The live JSONL may still exist for replay.
+
+### Thinking allowlist (empty on purpose)
+
+Pin prefixes here only when a slice *asks* to train on the thinking
+channel. Until then the converter keeps `open_prefixes` empty and every
+thinking block is stripped.
 
 ```
-# open_reasoning  — verified YYYY-MM-DD against <url>
-#   (none yet)
+# open_reasoning  — thinking channel. Empty until Stage 2 asks.
+#   (none — LoRA does not consume CoT)
 #
-# closed_hidden   — treat as closed unless moved above
+# closed_hidden   — never train on thinking; transcript also not mineable
 #   claude-*
 #   gpt-*  o1-*  o3-*  o4-*
 #   grok-*
+#   gemini-*
 #
-# everything else is answer_only until classified
+# everything else is answer_only (transcript may still be mineable)
 ```
 
-Alibaba-style and Together-hosted Qwen that *serve* raw reasoning are candidates for
-`open_reasoning` **only after that day's terms say so**. Self-hosted weights of an
-Apache/Qwen-licensed checkpoint are the expected first entries.
-
-Unknown model id → `answer_only`. A thinking block on an unknown id is stripped, not
-promoted. Promotion is an allowlist edit, dated in this file.
+Unknown model id → `answer_only`. A thinking block on an unknown id is
+stripped, not promoted. Promotion is an allowlist edit, dated in this file.
 
 ## Snapshot contract
 

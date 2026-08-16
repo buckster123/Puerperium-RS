@@ -25,7 +25,9 @@ const SPAWN_SESSION_BASE: u64 = 1 << 63;
 
 /// Model-id prefixes that are closed-API hidden reasoning. Promotion off this
 /// list is an allowlist edit, dated in `docs/harvest.md`.
-const CLOSED_PREFIXES: &[&str] = &["claude-", "gpt-", "o1-", "o3-", "o4-", "grok-"];
+const CLOSED_PREFIXES: &[&str] = &[
+    "claude-", "gpt-", "o1-", "o3-", "o4-", "grok-", "gemini-",
+];
 
 /// How a session directory is mined.
 #[derive(Debug, Clone)]
@@ -626,6 +628,10 @@ mod tests {
         );
         assert_eq!(
             classify(Some("claude-opus"), false, &HarvestConfig::new()),
+            LicenseClass::ClosedHidden
+        );
+        assert_eq!(
+            classify(Some("gemini-2.5-pro"), false, &HarvestConfig::new()),
             LicenseClass::ClosedHidden
         );
     }
