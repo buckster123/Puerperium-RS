@@ -16,6 +16,14 @@ pub enum Error {
     #[error("no examples survived the quality gate ({rejected} rejected) — nothing was written")]
     NoExamples { rejected: usize },
 
+    #[error(
+        "refusing to mine a live AGENTD_LOG ({0}) — copy the export first (D13 / docs/harvest.md)"
+    )]
+    LiveSessionsDir(PathBuf),
+
+    #[error("no session-*.jsonl files in {0} — export with format jsonl first (docs/harvest.md)")]
+    NoSessionFiles(PathBuf),
+
     #[error("{what} {name:?} already exists")]
     AlreadyExists { what: String, name: String },
 

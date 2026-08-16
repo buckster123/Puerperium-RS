@@ -130,8 +130,10 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
 
 **Harvest follow-ups** (D13 designed 2026-08-16; no code)
 
-- [ ] **Puerperium: `session_jsonl` source + trajectory converter + secret scan**
-      — the slice this repo owns. Contract in `docs/harvest.md` / `docs/design.md`.
+- [x] **Puerperium: `session_jsonl` source + trajectory converter + secret scan**
+      (2026-08-16) — `puerperium::harvest`, `--sessions` / MCP `sessions`,
+      `Provenance::SessionTurn`, secret scan before write. Live `AGENTD_LOG`
+      refused. Open-reasoning allowlist still empty (verify ToS on first mine).
 - **ApexOS: persist OAI `reasoning_content`** — sibling thread. Today's Qwen
   thinking dies in `oai.rs`. Empty signature = not Anthropic-replay; do not send
   thinking back on the OAI path.

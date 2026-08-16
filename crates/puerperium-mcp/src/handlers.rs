@@ -76,7 +76,8 @@ impl Face {
         if args["synthetic"].as_bool() == Some(true) {
             return Err(CallError::Refused {
                 reason: "synthetic templates are not built — nursery_generate_data takes a \
-                         Cerebro snapshot (`db`) or a memories JSON export (`from`)"
+                         Cerebro snapshot (`db`), a memories JSON export (`from`), or \
+                         exported session JSONL (`sessions`)"
                     .into(),
             });
         }
@@ -84,7 +85,27 @@ impl Face {
         let name = req_str(args, "name")?;
         let from = opt_str(args, "from");
         let db = opt_str(args, "db");
+        let sessions = opt_str(args, "sessions");
         let dry_run = bool_or(args, "dry_run", true);
+
+        if let Some(dir) = sessions {
+            if from.is_some() || db.is_some() {
+                return Err(CallError::InvalidArgs(
+                    "give exactly one of `from`, `db`, or `sessions`".into(),
+                ));
+            }
+            let mut cfg = puerperium::harvest::HarvestConfig::new();
+            cfg.node_id = opt_str(args, "node").map(str::to_string);
+            let out = puerperium::harvest::mine_sessions(Path::new(dir), &cfg).map_err(lib_err)?;
+            let n = out.memories_used + out.rejections.total();
+            let source = SourceSpec {
+                kind: "session_jsonl".into(),
+                query: Some(dir.to_string()),
+                agent_id: None,
+                memories_in: n,
+            };
+            return finish_generate(&self.paths, name, dry_run, &out, source, n);
+        }
 
         let (memories, source) = match (from, db) {
             (Some(path), None) => {
@@ -130,8 +151,9 @@ impl Face {
             }
             (None, None) => {
                 return Err(CallError::InvalidArgs(
-                    "`from` (memories JSON) or `db` (Cerebro snapshot) is required. \
-                     Synthetic templates are not built and refuse honestly."
+                    "`from` (memories JSON), `db` (Cerebro snapshot), or `sessions` \
+                     (ApexOS export) is required. Synthetic templates are not built \
+                     and refuse honestly."
                         .into(),
                 ));
             }
@@ -139,23 +161,7 @@ impl Face {
 
         let cfg = convert_config(args)?;
         let out = convert(&memories, &cfg);
-        let mut body = convert_summary(&out, memories.len());
-        body["name"] = json!(name);
-        body["dry_run"] = json!(dry_run);
-
-        if dry_run {
-            body["written"] = json!(false);
-            return Ok(body);
-        }
-
-        let meta = dataset::write(&self.paths.datasets(), name, &out, source).map_err(lib_err)?;
-        body["written"] = json!(true);
-        body["sha256"] = json!(meta.sha256);
-        body["path"] = json!(dataset::jsonl_path(&self.paths.datasets(), &meta.name)
-            .map_err(lib_err)?
-            .display()
-            .to_string());
-        Ok(body)
+        finish_generate(&self.paths, name, dry_run, &out, source, memories.len())
     }
 
     fn list_datasets(&self) -> Result<Value, CallError> {
@@ -663,6 +669,34 @@ fn convert_config(args: &Value) -> Result<ConvertConfig, CallError> {
     Ok(cfg)
 }
 
+fn finish_generate(
+    paths: &Paths,
+    name: &str,
+    dry_run: bool,
+    out: &Converted,
+    source: SourceSpec,
+    input: usize,
+) -> Result<Value, CallError> {
+    let mut body = convert_summary(out, input);
+    body["name"] = json!(name);
+    body["dry_run"] = json!(dry_run);
+    body["source_kind"] = json!(source.kind.clone());
+
+    if dry_run {
+        body["written"] = json!(false);
+        return Ok(body);
+    }
+
+    let meta = dataset::write(&paths.datasets(), name, out, source).map_err(lib_err)?;
+    body["written"] = json!(true);
+    body["sha256"] = json!(meta.sha256);
+    body["path"] = json!(dataset::jsonl_path(&paths.datasets(), &meta.name)
+        .map_err(lib_err)?
+        .display()
+        .to_string());
+    Ok(body)
+}
+
 fn convert_summary(out: &Converted, memories_in: usize) -> Value {
     let framing: BTreeMap<&str, usize> =
         out.framing.iter().map(|(k, n)| (k.as_str(), *n)).collect();
@@ -835,6 +869,53 @@ mod tests {
         assert_eq!(v["written"], false);
         assert!(v["examples"].as_u64().unwrap() >= 1);
         assert!(dataset::list(&face.paths.datasets()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn generate_from_sessions_is_a_third_exclusive_source() {
+        let (_d, face) = face();
+        let dir = tempfile::TempDir::new().expect("sessions");
+        let line_u = serde_json::json!({
+            "role":"user",
+            "content":[{"type":"text","text":"bind LAN on the studio box so apex1 can reach the proxy"}]
+        });
+        let line_a = serde_json::json!({
+            "role":"assistant",
+            "content":[{"type":"text","text":"Flip the extra bind; claim on the proxy, not :2739."}]
+        });
+        std::fs::write(
+            dir.path().join("session-22.jsonl"),
+            format!("{line_u}\n{line_a}\n"),
+        )
+        .unwrap();
+
+        let both = face
+            .call(
+                "nursery_generate_data",
+                &json!({
+                    "name": "from-sessions",
+                    "from": dir.path().display().to_string(),
+                    "sessions": dir.path().display().to_string(),
+                }),
+            )
+            .expect_err("exclusive");
+        assert!(matches!(both, CallError::InvalidArgs(_)));
+
+        let v = face
+            .call(
+                "nursery_generate_data",
+                &json!({
+                    "name": "from-sessions",
+                    "sessions": dir.path().display().to_string(),
+                    "node": "apex1",
+                }),
+            )
+            .expect("ok");
+        assert_eq!(v["dry_run"], true);
+        assert_eq!(v["written"], false);
+        assert_eq!(v["source_kind"], "session_jsonl");
+        assert_eq!(v["examples"], 1);
+        assert_eq!(v["memories_used"], 1);
     }
 
     #[test]

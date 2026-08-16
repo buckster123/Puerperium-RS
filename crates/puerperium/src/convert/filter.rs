@@ -33,6 +33,20 @@ pub enum Rejection {
     Unframeable,
     /// Produced by Cerebro's dream engine rather than lived. Excluded by default.
     DreamDerived,
+    /// Key-shaped token in a session round (D13). Never uploaded.
+    Secret,
+    /// Round is only an image payload.
+    ImageOnly,
+    /// Assistant left no text and no tool use (today's Qwen `reasoning_content` hole).
+    EmptyAssistant,
+    /// Session 0 is the sensor/scheduler funnel, not a conversation.
+    SessionZero,
+    /// Spawn-range session ids are not persisted and must not be mined.
+    Spawn,
+    /// A tool result over the char cap — refuse the round, never truncate.
+    ToolResultTooLong,
+    /// A JSONL line that is not an ApexOS `Message`.
+    Unparsable,
 }
 
 impl Rejection {
@@ -46,6 +60,13 @@ impl Rejection {
             Rejection::NotProse => "not_prose",
             Rejection::Unframeable => "unframeable",
             Rejection::DreamDerived => "dream_derived",
+            Rejection::Secret => "secret",
+            Rejection::ImageOnly => "image_only",
+            Rejection::EmptyAssistant => "empty_assistant",
+            Rejection::SessionZero => "session_zero",
+            Rejection::Spawn => "spawn",
+            Rejection::ToolResultTooLong => "tool_result_too_long",
+            Rejection::Unparsable => "unparsable",
         }
     }
 }
@@ -201,7 +222,7 @@ pub fn assess(mem: &MemoryRecord, cfg: &FilterConfig) -> Result<(), Rejection> {
 /// Notably *not* decisive on its own: the bare phrase "smoke test", which appears in
 /// perfectly good operational procedures ("run the smoke test before deploying"). Only the
 /// conversational form ("first smoke test") counts.
-fn is_chatter(content: &str) -> bool {
+pub fn is_chatter(content: &str) -> bool {
     let first_line = content.lines().next().unwrap_or("").trim().to_lowercase();
     if GREETING_OPENERS.iter().any(|g| first_line.starts_with(g)) {
         return true;

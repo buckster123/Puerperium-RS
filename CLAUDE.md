@@ -146,6 +146,7 @@ cargo build --release --workspace
 # Dataset garden (S1). Cerebro snapshot (`--db`, read-only) or a memories JSON export (`--from`).
 ./target/release/puerperium data generate --db /tmp/snap.db --agent FORGE --name my-set --domain ApexOS --dry-run
 ./target/release/puerperium data generate --from memories.json --name my-set --domain ApexOS
+./target/release/puerperium data generate --sessions /tmp/exports --node apex1 --name apex1-turns --dry-run
 ./target/release/puerperium data list
 ./target/release/puerperium data inspect my-set --head 5
 ./target/release/puerperium data verify my-set

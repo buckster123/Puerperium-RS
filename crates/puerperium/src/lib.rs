@@ -13,6 +13,7 @@
 //! - [`example`] — the training example and its sharegpt wire form
 //! - [`dataset`] — writing, hashing and listing datasets
 //! - [`provenance`] — where every example came from (charter D12)
+//! - [`harvest`] — ApexOS session JSONL → trajectory examples (charter D13)
 //!
 //! # The pure core
 //!
@@ -53,6 +54,7 @@ pub mod error;
 pub mod estimate;
 pub mod example;
 pub mod export;
+pub mod harvest;
 pub mod job;
 pub mod memory;
 pub mod paths;

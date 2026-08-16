@@ -277,8 +277,8 @@ If and when they wire it:
 
 ## Layer 4 — Session JSONL as the primary mine
 
-This is the high-value data the first Together run did not have. Puerperium slice,
-later; contracted here.
+This is the high-value data the first Together run did not have. Wired as
+`puerperium::harvest` / `--sessions`.
 
 **Input:** a directory of exported `session-*.jsonl` (see Snapshot contract).
 
@@ -306,8 +306,9 @@ an instruction.
 beside `db` and `from`. `dry_run` still defaults true. Synthetic still refuses
 honestly. **No new MCP verb.**
 
-Until this slice is built, a caller asking for a sessions path is an honest
-refusal naming `harvest.md`, not a silent ignore.
+`puerperium data generate --sessions <dir> --name … --dry-run` and
+`nursery_generate_data { sessions, name }` are the verbs. A live
+`AGENTD_LOG/sessions` is refused.
 
 ### Secret scan
 

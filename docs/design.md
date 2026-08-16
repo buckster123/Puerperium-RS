@@ -28,7 +28,7 @@ refusal naming what is missing (D8), never an absence and never a fake success.
 
 | Tool | Purpose |
 |---|---|
-| `nursery_generate_data` | Build an instruction dataset. Source is a **Cerebro snapshot** (`db` + `agent_id`, opened read-only) or a **memories JSON export** (`from`). A third exclusive source — **exported ApexOS session JSONL** (`sessions`) — is contracted in `harvest.md` (D13) and **not wired**; asking for it is an honest refusal until that slice. Writes JSONL, stamps provenance per example, hashes the file (D12). `dry_run` defaults **true** (datasets are immutable). **Synthetic templates are not built** — that path refuses honestly rather than inventing examples. |
+| `nursery_generate_data` | Build an instruction dataset. Exclusive source: a **Cerebro snapshot** (`db` + `agent_id`, opened read-only), a **memories JSON export** (`from`), or a **copied ApexOS session export** (`sessions`, D13). Writes JSONL, stamps provenance per example, hashes the file (D12). `dry_run` defaults **true** (datasets are immutable). **Synthetic templates are not built** — that path refuses honestly rather than inventing examples. A live `AGENTD_LOG/sessions` is refused, not mined. |
 | `nursery_list_datasets` | Datasets with example counts, source kind, `sha256`, creation time. |
 | `nursery_inspect_dataset` | First N examples plus the provenance histogram — *where did this data come from?* answered without opening the file. |
 
@@ -173,14 +173,14 @@ pub struct Example {
 /// What produced a dataset. `kind` is a closed string set, not free prose.
 pub struct SourceSpec {
     pub kind: String,                    // cerebro_query | export_file | synthetic
-                                         // | session_jsonl (D13, not wired)
+                                         // | session_jsonl (D13)
                                          // | router_capture (parked)
     pub query: Option<String>,
     pub agent_id: Option<String>,        // whose space — not the trainer (D6)
     pub memories_in: usize,              // memories or rounds, matching kind
 }
 
-/// Origin of one example (D12). SessionTurn is contracted (D13), not in the crate yet.
+/// Origin of one example (D12). SessionTurn is the session-JSONL converter (D13).
 pub enum Provenance {
     CerebroMemory { memory_id: String, agent_id: Option<String>, heading_path: Vec<String> },
     Synthetic { template: String },
@@ -559,8 +559,8 @@ converter lands.
   `rounds_in = used + rejected`.
 - Secret scan is part of convert, **before** `job upload`. A key-shaped round is
   `rejected.secret`, never uploaded.
-- Until the converter is built, `nursery_generate_data` refuses a sessions path
-  honestly, naming this section. No new MCP verb.
+- `nursery_generate_data` accepts exclusive `sessions` (CLI `--sessions`, MCP
+  `sessions`). No new MCP verb. A live `AGENTD_LOG/sessions` is `LiveSessionsDir`.
 - `router_capture` is parked until ApexRouter wires `capture_bodies` under its
   own charter.
 
