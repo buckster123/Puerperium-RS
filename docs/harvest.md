@@ -1,9 +1,10 @@
 # Harvest, traces, and session RAG
 
-> **Design freeze, not a slice.** Charter D13 holds the rules; this document is the
-> contract those rules need. No converter, no RAG index, no ApexOS or ApexRouter code
-> ships from this file. A later slice implements against it. A PR that changes behaviour
-> updates this doc in the same commit.
+> **Contract.** Charter D13 holds the rules; this document is the contract
+> those rules need. The Puerperium converter (`session_jsonl`) shipped.
+> Session RAG, OAI `reasoning_content` persist, and Router `capture_bodies`
+> remain sibling-repo threads — no code for those ships from this file.
+> A PR that changes behaviour updates this doc in the same commit.
 >
 > Bound by `CHARTER.md` D1–D13. Where this doc and the charter disagree, the charter wins.
 
@@ -135,8 +136,15 @@ slice asks for it.
   `openai` / `google` / `x-ai`. Collection:
   <https://openrouter.ai/collections/distillable-models>. Cookbook:
   <https://openrouter.ai/docs/cookbook/evaluate-and-optimize/distillation>.
-- Alibaba/Qwen terms: André confirming. Community distills of 3.8 2.4T
-  already exist; treat that as smoke, not a substitute for the license page.
+- **Qwen / Alibaba, confirmed 2026-08-17 (André).** Open-weight Qwen
+  checkpoints on the Qwen GitHub are **Apache 2.0**: commercial use,
+  modification, and derivative works including distillation. A transcript
+  from **downloaded / self-hosted / vast / local** Qwen (this garden's
+  ApexOS nodes and `studio-llm`) is mineable for question 1. A transcript
+  from a **hosted Qwen API** (DashScope, Together, any reseller) follows
+  *that* provider's agreement, not the GitHub Apache line. Community
+  distills of 3.8 2.4T are consistent with the open-weight reading; they
+  are still not a substitute for the host's TOS on an API turn.
 
 **Not mineable:** a session whose assistant turns came from Claude / GPT /
 Gemini / Grok over their APIs. Those outputs are not training data, even

@@ -214,6 +214,13 @@ v1 ships the Stage-1 loop. Each gate is checkable, not aspirational.
   sessions are not mineable even with thinking stripped. D13 stands;
   `open_prefixes` stays empty until Stage 2 asks.
 
+- **2026-08-17** — **Open-weight Qwen is mineable for the transcript.**
+  André: Qwen GitHub weights are Apache 2.0 (commercial use, modification,
+  distillation). Self-hosted / vast / local Qwen turns are question 1
+  yes. A hosted Qwen API is that provider's TOS, not the Apache line.
+  Question 2 (thinking channel) is unchanged — `open_prefixes` stays
+  empty; LoRA still does not consume CoT. D13 stands.
+
 - **2026-08-16** — **`job download` is the missing link, and it shipped.** A finished
   Together job is now `GET /v1/finetune/download?checkpoint=adapter` (never omit
   `checkpoint` — the API default is `merged`), a `.tar.zst` extract with a path-escape
