@@ -4,11 +4,10 @@
 //! is terminal — lives in [`super::together`] and is unit-tested there. This file only moves
 //! bytes.
 //!
-//! > **Unverified against the live API.** Every shape here comes from Together's own SDK
-//! > types, and the parsers are tested against those shapes, but no request has ever been
-//! > sent. Charter D5 forbids live calls from tests, and D4/D8 make the first real submission
-//! > André's explicit, counted act. Until then this is INSTALLED, not ACTIVE — and it says so
-//! > rather than pretending otherwise.
+//! > **ACTIVE for one live job** (`ft-da39441f-d088`, 2026-08-03). Shapes still come from
+//! > Together's SDK types and parsers stay fixture-tested (D5: no live calls from CI). The
+//! > S6 *measurement* — a specialist beats its base on a real task — is still unmet, and
+//! > further paid submits remain André's explicit, counted act (D4/D8).
 
 use std::time::Duration;
 

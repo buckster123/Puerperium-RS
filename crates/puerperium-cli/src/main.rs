@@ -138,6 +138,13 @@ enum JobCmd {
         base_model: String,
         #[arg(long, default_value_t = 3)]
         epochs: u32,
+        #[arg(long, default_value_t = 16)]
+        lora_r: u32,
+        #[arg(long, default_value_t = 32)]
+        lora_alpha: u32,
+        /// Parameter count in billions, for the metered-vs-floor note only.
+        #[arg(long, default_value_t = 35.0)]
+        params_b: f64,
     },
 }
 
@@ -353,7 +360,17 @@ fn main() -> Result<()> {
             training_file_id,
             base_model,
             epochs,
-        }) => job_quote(&training_file_id, &base_model, epochs),
+            lora_r,
+            lora_alpha,
+            params_b,
+        }) => job_quote(
+            &training_file_id,
+            &base_model,
+            epochs,
+            lora_r,
+            lora_alpha,
+            params_b,
+        ),
         Command::Estimate(args) => estimate_cost(&paths, args),
         Command::Keys => keys(&loaded),
         Command::Compute => compute(),
@@ -1058,15 +1075,22 @@ fn deploy(paths: &Paths, args: DeployArgs) -> Result<()> {
 }
 
 /// The authoritative quote. Free, and the only number that includes the minimum charge.
-fn job_quote(training_file_id: &str, base_model: &str, epochs: u32) -> Result<()> {
+fn job_quote(
+    training_file_id: &str,
+    base_model: &str,
+    epochs: u32,
+    lora_r: u32,
+    lora_alpha: u32,
+    params_b: f64,
+) -> Result<()> {
     let client = together()?;
     let limits = client.limits(base_model)?;
     let est = client.estimate_price(
         training_file_id,
         base_model,
         epochs,
-        16,
-        32,
+        lora_r,
+        lora_alpha,
         &limits.target_modules,
     )?;
     println!("train tokens  {}", est.train_tokens);
@@ -1074,11 +1098,13 @@ fn job_quote(training_file_id: &str, base_model: &str, epochs: u32) -> Result<()
     if !est.allowed_to_proceed {
         println!("REFUSED       this would exceed the account limit");
     }
-    let metered = (est.train_tokens as f64 / 1_000_000.0) * 1.50;
-    if est.total_usd > metered * 2.0 {
-        println!(
-            "note          a MINIMUM CHARGE dominates: metered tokens are only ~${metered:.2}"
-        );
+    if let Some(band) = puerperium::provider::together::lora_price_per_mtok(params_b) {
+        let metered = (est.train_tokens as f64 / 1_000_000.0) * band;
+        if est.total_usd > metered * 2.0 {
+            println!(
+                "note          a MINIMUM CHARGE dominates: metered tokens are only ~${metered:.2}"
+            );
+        }
     }
     Ok(())
 }

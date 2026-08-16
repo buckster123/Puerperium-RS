@@ -31,7 +31,8 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
       failure, terminal, with their reason · terminal written once, never re-polled · compute
       gated before anything is written. Status mapping taken from Together's own SDK enum;
       unrecognised states are `Unknown`, never `Running`.
-      *Not verified live* — no key, so the HTTP client is INSTALLED, not ACTIVE.
+      *Verified live 2026-08-03* — job `ft-da39441f-d088` reached terminal once. Client is
+      ACTIVE. S6 measurement (beats the base) is still unmet.
 - [x] **S4 — apprentice protocol**: `apprentice create` mines a Cerebro snapshot (read-only)
       → dataset → lineage-complete record; `attach-job`/`attach-model` walk it to trained.
       134 tests. Proven on the real store: 300 memories mined → 114 examples from 39, dataset
@@ -112,10 +113,10 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
       `job upload` (the three-step presigned flow). The loop is closed: dataset → export →
       upload → submit → poll → adapter. Found in the process: Together rejects extra columns,
       so the stored and uploaded files are deliberately different artifacts.
-- **First live submission** — gated on a `TOGETHER_API_KEY` and André's explicit go (D4/D8).
-  This is also where the charter's open question gets answered: whether Together accepts
-  `Qwen/Qwen3.6-27B` as a fine-tune base. Run `job submit --dry-run` first; it prints the exact
-  body without contacting anything.
+- [x] **First live submission** — `ft-da39441f-d088` (2026-08-03). Together does **not**
+      accept `Qwen/Qwen3.6-27B`; the LoRA base is `Qwen/Qwen3.6-35B-A3B`. Further submits
+      stay André's explicit go (D4/D8). `job quote` is the spend number; local `estimate`
+      ignores the minimum charge.
 - [x] **Router compute discovery** — `puerperium compute` reads Router's backends read-only.
       Still to wire: `job submit --available-compute` should default to a **probed** listing —
       a backend row is configuration, not liveness (a vast recipe reads `enabled` while cold),

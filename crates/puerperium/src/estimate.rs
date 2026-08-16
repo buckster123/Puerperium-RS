@@ -54,7 +54,7 @@ pub fn together_lora(dataset_chars: u64, epochs: u32, params_b: f64) -> Estimate
         ),
         "training only — hosting a tuned model is a separate ongoing charge".to_string(),
         "IGNORES THE MINIMUM CHARGE, which dominates small datasets — a real job metering at \
-         $0.08 was billed $4.00. Use `job estimate` on an uploaded file for the real number."
+         $0.08 was billed $4.00. Use `job quote` on an uploaded file for the real number."
             .to_string(),
     ];
     if price.is_none() {
@@ -115,6 +115,10 @@ mod tests {
         let joined = e.caveats.join(" ");
         assert!(joined.contains("hosting"), "got {joined}");
         assert!(joined.contains("approximate"), "got {joined}");
+        assert!(
+            joined.contains("MINIMUM CHARGE") && joined.contains("job quote"),
+            "must name the floor and the verb that sees it: {joined}"
+        );
     }
 
     #[test]
