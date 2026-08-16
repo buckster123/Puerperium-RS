@@ -159,10 +159,13 @@ v1 ships the Stage-1 loop. Each gate is checkable, not aspirational.
   `Qwen3.6-27B-Q6_K.gguf` today), so **the base differs by provider** and neither default is
   wrong everywhere. `puerperium compute` now lists the LoRA-capable bases each backend
   advertises, so the choice is checkable for free before anything is submitted.
-- **Hosting is a second, ongoing charge.** A Together-tuned model bills for its dedicated
-  endpoint separately from training. Should `nursery_estimate_cost` quote training-only, or
-  training + N days of hosting? Leaning: both, explicitly labelled — a single number here would
-  be the dishonest kind of simplification.
+- ~~**Hosting is a second, ongoing charge.**~~ **Confirmed concretely 2026-08-03.** A tuned
+  adapter is **not serverless**: calling it returns *"Unable to access non-serverless model …
+  create and start a new dedicated endpoint"*. So evaluating a specialist costs **hourly**,
+  independent of the one-off training charge. Two consequences: the estimator must never imply
+  it covers serving, and **the S6 measurement itself has a running cost** — which makes it an
+  explicit, counted act rather than a step the pipeline takes on its own.
+  Still open: whether to quote N days of hosting alongside training, or only name it.
 - **Artifact handoff shape.** Does Puerperium register the adapter with Router itself, or hand
   back a path and let the operator route it? Leaning: hand back, then offer registration as a
   separate explicit verb — it keeps D2's boundary clean.
@@ -173,6 +176,22 @@ v1 ships the Stage-1 loop. Each gate is checkable, not aspirational.
 ---
 
 ## Amendments
+
+- **2026-08-03** — **Together is a TRAINING provider only; serving happens on vast or local
+  compute.** Their dedicated endpoints are priced for the hardware they run on (B200 / dual
+  H100 class), which is absurd overkill for a small LoRA adapter. Parked until further notice.
+  *Consequence the pipeline has to answer:* a Together fine-tune currently leaves its artifact
+  as a **model name hosted on their side**, not as weights we hold. Serving on vast/local means
+  the adapter must be **downloaded** — `job download` is now the missing link between a
+  finished job and a servable model, and it is the top of the backlog. Until it exists, a
+  completed job produces something we can name in lineage but cannot yet run.
+
+- **2026-08-03** — **spend estimates come from the provider, not from us** (S6 finding). The
+  first shipped job metered $0.076 of tokens and was billed **$4.00**: a minimum charge no
+  token-based local heuristic can see, on top of a 3.6x token overestimate. `job quote` now
+  calls Together's free `estimate-price` endpoint, and the local `estimate` says loudly that it
+  ignores the floor. No decision reversed; D4 is *strengthened* — "spend is gated" is only
+  meaningful if the number shown to the operator is the real one.
 
 - **2026-08-03** — **the fine-tune base differs by provider** (S5 finding, resolves an open
   question). Together carries no dense `Qwen3.6-27B`; its LoRA-capable Qwen3.6 base is

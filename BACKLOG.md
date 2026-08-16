@@ -31,7 +31,8 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
       failure, terminal, with their reason · terminal written once, never re-polled · compute
       gated before anything is written. Status mapping taken from Together's own SDK enum;
       unrecognised states are `Unknown`, never `Running`.
-      *Not verified live* — no key, so the HTTP client is INSTALLED, not ACTIVE.
+      *Verified live 2026-08-03* — job `ft-da39441f-d088` reached terminal once. Client is
+      ACTIVE. S6 measurement (beats the base) is still unmet.
 - [x] **S4 — apprentice protocol**: `apprentice create` mines a Cerebro snapshot (read-only)
       → dataset → lineage-complete record; `attach-job`/`attach-model` walk it to trained.
       134 tests. Proven on the real store: 300 memories mined → 114 examples from 39, dataset
@@ -43,7 +44,12 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
       exact NodeSpec/ModelRoute. Reuses an existing backend rather than duplicating; credential
       is sent as a *pointer* (`{kind:env, var:…}`), never key material. Resolved a charter open
       question along the way — see the 2026-08-03 amendment.
-- [ ] **S6 — field**: one real adapter, end to end. A specialist trained from FORGE's own
+- [~] **S6 — field**: pipeline proven end to end on real data and real money (2026-08-03) —
+      231 examples → uploaded → trained on Together → terminal written once → registered →
+      lineage resolving. **The measurement is deliberately unmet**: evaluating needs a
+      dedicated endpoint (hourly, B200-class pricing) and serving is going to vast/local
+      instead. Final gate awaits a proper run on a healthy dataset. Original text below.
+- [ ] **S6 gate — one real adapter, end to end.** A specialist trained from FORGE's own
       memory beats its base on a real task — **measured, not asserted**. This is the point of
       the whole thing; nothing above counts until this row is ticked.
 
@@ -87,6 +93,16 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
 - **Near-duplicate collapse** — Cerebro reinforces rather than re-mints at ≥0.86 cosine, but a
   dataset mined across months can still carry restatements of one lesson.
 
+**Next up — the gap the first real run exposed**
+
+- **`job download`** — a Together fine-tune leaves its artifact as a model name hosted on
+  *their* side. Serving on vast/local (charter amendment 2026-08-03) means the adapter weights
+  have to come home. This is now the missing link between a finished job and a servable model:
+  without it a completed job produces something nameable in lineage but not runnable.
+- **A healthy dataset** — 231 examples was a PoC. More *lived* material (not more epochs, not
+  dream-derived) is what the final S6 run needs. And with a minimum charge dominating, one
+  larger run costs the same as several small ones.
+
 **S3 follow-ups**
 
 - [x] **Credential loading** — env-file support (`~/.config/puerperium/env`, 0600) plus a
@@ -97,10 +113,10 @@ A row gets its ✅ when the slice is **merged and verified for real** — not wh
       `job upload` (the three-step presigned flow). The loop is closed: dataset → export →
       upload → submit → poll → adapter. Found in the process: Together rejects extra columns,
       so the stored and uploaded files are deliberately different artifacts.
-- **First live submission** — gated on a `TOGETHER_API_KEY` and André's explicit go (D4/D8).
-  This is also where the charter's open question gets answered: whether Together accepts
-  `Qwen/Qwen3.6-27B` as a fine-tune base. Run `job submit --dry-run` first; it prints the exact
-  body without contacting anything.
+- [x] **First live submission** — `ft-da39441f-d088` (2026-08-03). Together does **not**
+      accept `Qwen/Qwen3.6-27B`; the LoRA base is `Qwen/Qwen3.6-35B-A3B`. Further submits
+      stay André's explicit go (D4/D8). `job quote` is the spend number; local `estimate`
+      ignores the minimum charge.
 - [x] **Router compute discovery** — `puerperium compute` reads Router's backends read-only.
       Still to wire: `job submit --available-compute` should default to a **probed** listing —
       a backend row is configuration, not liveness (a vast recipe reads `enabled` while cold),

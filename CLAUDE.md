@@ -37,8 +37,8 @@ routed work → repeat.** Rewriting the driver model's own weights is Stage 2, d
 ```
 crates/
   puerperium/         # core lib — datasets, jobs, registry, lineage. No I/O glue.
-  puerperium-mcp/     # MCP stdio server — the agent face (nursery_* tools)
-  puerperium-cli/     # clap CLI — the human/ops face
+  puerperium-cli/     # clap CLI — the human/ops face (shipped)
+  # puerperium-mcp/   # agent face (nursery_* tools) — not built yet; D1 still wants it
 docs/CHARTER.md       # binding decisions D1–D12, phases, scope fence
 docs/design.md        # THE contract — tool surface, types, lifecycle
 docs/rebirth.md       # Stage 2 design freeze (R0) — no code ships from this
@@ -165,7 +165,8 @@ cargo build --release --workspace
     --served-model acct/worker-v2 --dry-run
 
 # Jobs (S3). Together is a hosted API — no compute to provision.
-./target/release/puerperium estimate --dataset my-set --params-b 27 --epochs 3
+./target/release/puerperium estimate --dataset my-set --params-b 35 --epochs 3
+./target/release/puerperium job quote file-abc --base-model Qwen/Qwen3.6-35B-A3B
 ./target/release/puerperium job submit --id j1 --dataset my-set --output-name worker-v2 \
     --training-file-id file-abc --dry-run       # prints the body, contacts nothing
 ./target/release/puerperium data export my-set --to /tmp/upload.jsonl   # offline, validates
@@ -180,9 +181,10 @@ variable always wins; failing that, the first of `$PUERPERIUM_ENV_FILE`,
 the house format). `puerperium keys` reports what is configured **without ever printing a
 value**. On this box the key already comes from `~/.bashrc`, so no file is needed.
 
-**Nothing has been submitted to Together for real yet.** The client is built from their SDK
-types and the parsers are tested against those shapes, but no request has been sent — it is
-INSTALLED, not ACTIVE. First live use needs a key and is André's explicit call (D4/D8).
+**Together path is ACTIVE for one job** (`ft-da39441f-d088`, 2026-08-03). Further paid
+submits are still André's explicit, counted act (D4/D8). `job quote` is the only trustworthy
+price — the local `estimate` ignores Together's minimum charge. S6's measurement gate
+(specialist beats base) is **not met**.
 
 **Mining a Cerebro store:** `apprentice create --db` opens the file **read-only** and never
 writes. Point it at a `.backup` snapshot, not a live database:

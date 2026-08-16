@@ -4,11 +4,10 @@
 //! is terminal — lives in [`super::together`] and is unit-tested there. This file only moves
 //! bytes.
 //!
-//! > **Unverified against the live API.** Every shape here comes from Together's own SDK
-//! > types, and the parsers are tested against those shapes, but no request has ever been
-//! > sent. Charter D5 forbids live calls from tests, and D4/D8 make the first real submission
-//! > André's explicit, counted act. Until then this is INSTALLED, not ACTIVE — and it says so
-//! > rather than pretending otherwise.
+//! > **ACTIVE for one live job** (`ft-da39441f-d088`, 2026-08-03). Shapes still come from
+//! > Together's SDK types and parsers stay fixture-tested (D5: no live calls from CI). The
+//! > S6 *measurement* — a specialist beats its base on a real task — is still unmet, and
+//! > further paid submits remain André's explicit, counted act (D4/D8).
 
 use std::time::Duration;
 
@@ -209,6 +208,37 @@ impl TogetherClient {
             .text()
             .map_err(|e| ProviderError::Unreachable(e.to_string()))?;
         together::parse_limits(&body)
+    }
+}
+
+impl TogetherClient {
+    /// Together's own price estimate for an uploaded file. Free, and authoritative — it
+    /// knows the real tokenizer *and* the minimum charge, neither of which a local heuristic
+    /// can guess.
+    pub fn estimate_price(
+        &self,
+        training_file_id: &str,
+        base_model: &str,
+        n_epochs: u32,
+        lora_r: u32,
+        lora_alpha: u32,
+        target_modules: &[String],
+    ) -> Result<together::PriceEstimate, ProviderError> {
+        let body = together::build_estimate_body(
+            training_file_id,
+            base_model,
+            n_epochs,
+            lora_r,
+            lora_alpha,
+            target_modules,
+        );
+        let resp = self
+            .http
+            .post(self.url("fine-tunes/estimate-price"))
+            .bearer_auth(&self.api_key)
+            .json(&body)
+            .send();
+        together::parse_price_estimate(&read(resp)?)
     }
 }
 
